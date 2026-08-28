@@ -45,6 +45,16 @@ type autopilotQuotaMetricsRecorder struct {
 	decisions map[string]int
 }
 
+type countingTxStarter struct {
+	inner  TxStarter
+	begins atomic.Int64
+}
+
+func (s *countingTxStarter) Begin(ctx context.Context) (pgx.Tx, error) {
+	s.begins.Add(1)
+	return s.inner.Begin(ctx)
+}
+
 func (m *autopilotQuotaMetricsRecorder) RecordAutopilotQuotaDecision(action, source, result string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -299,6 +309,49 @@ func TestAutopilotQuotaThresholdNoticesReachEveryMemberOnce(t *testing.T) {
 	}
 }
 
+func TestAutopilotQuotaThresholdNoticeFastPathAvoidsWriteTransaction(t *testing.T) {
+	tests := []struct {
+		name       string
+		limit      int
+		thresholds []entitlement.NotificationThreshold
+		runs       int
+		wantBegins int64
+	}{
+		{name: "rejection only", limit: 1, runs: 1, wantBegins: 1},
+		{
+			name: "threshold not reached", limit: 10, runs: 1,
+			thresholds: []entitlement.NotificationThreshold{{Key: "usage_50", Percent: 50, AtCount: 5}},
+			wantBegins: 1,
+		},
+		{
+			name: "threshold already delivered", limit: 3, runs: 2,
+			thresholds: []entitlement.NotificationThreshold{{Key: "usage_50", Percent: 50, AtCount: 1}},
+			// Two admission transactions plus the first threshold delivery. The
+			// second admission sees the persisted marker without taking the lock.
+			wantBegins: 3,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fixture := newAutopilotQuotaFixture(t, entitlement.ActionEnforce, tt.limit)
+			fixture.setNotificationPolicy(tt.limit, tt.thresholds...)
+			starter := &countingTxStarter{inner: fixture.pool}
+			fixture.service.TxStarter = starter
+			for i := 0; i < tt.runs; i++ {
+				if _, _, err := fixture.service.createAutopilotRunWithQuota(
+					context.Background(), fixture.workspaceID, "api", fmt.Sprintf("threshold-fast-path-%d", i), fixture.createRunArgs,
+				); err != nil {
+					t.Fatalf("admission %d: %v", i, err)
+				}
+			}
+			if got := starter.begins.Load(); got != tt.wantBegins {
+				t.Fatalf("transactions begun = %d, want %d", got, tt.wantBegins)
+			}
+		})
+	}
+}
+
 func TestAutopilotQuotaRejectionNoticeAudiences(t *testing.T) {
 	fixture := newAutopilotQuotaFixture(t, entitlement.ActionEnforce, 2)
 	fixture.setNotificationPolicy(2,
@@ -350,19 +403,27 @@ func TestAutopilotQuotaRejectionNoticeAudiences(t *testing.T) {
 	}
 	manualParams := fixture.createRunArgs
 	manualParams.Source = "manual"
-	_, _, err = fixture.service.createAutopilotRunWithQuotaForActor(
-		ctx, fixture.workspaceID, "manual", "manual-rejection", actorID, manualParams,
-	)
-	if !errors.As(err, &quotaErr) {
-		t.Fatalf("manual rejection = %v, want quota error", err)
+	for _, key := range []string{"manual-rejection", "manual-rejection-again"} {
+		_, _, err = fixture.service.createAutopilotRunWithQuotaForActor(
+			ctx, fixture.workspaceID, "manual", key, actorID, manualParams,
+		)
+		if !errors.As(err, &quotaErr) {
+			t.Fatalf("manual rejection %q = %v, want quota error", key, err)
+		}
 	}
+	// API dispatch is also machine-facing, so it shares the per-autopilot
+	// interval with schedule and webhook. Move past the schedule marker, then
+	// prove an immediate repeated API attempt is coalesced.
+	noticeNow = noticeNow.Add(24 * time.Hour)
 	apiParams := fixture.createRunArgs
 	apiParams.Source = "api"
-	_, _, err = fixture.service.createAutopilotRunWithQuota(
-		ctx, fixture.workspaceID, "api", "api-rejection", apiParams,
-	)
-	if !errors.As(err, &quotaErr) {
-		t.Fatalf("api rejection = %v, want quota error", err)
+	for _, key := range []string{"api-rejection", "api-rejection-coalesced"} {
+		_, _, err = fixture.service.createAutopilotRunWithQuota(
+			ctx, fixture.workspaceID, "api", key, apiParams,
+		)
+		if !errors.As(err, &quotaErr) {
+			t.Fatalf("api rejection %q = %v, want quota error", key, err)
+		}
 	}
 
 	var firstTitle, firstNoticeKey string
@@ -390,6 +451,17 @@ func TestAutopilotQuotaRejectionNoticeAudiences(t *testing.T) {
 	if intervalNotices != 3 {
 		t.Fatalf("interval rejection rows = %d, want affected creator/admin/subscriber only", intervalNotices)
 	}
+	var apiIntervalNotices int
+	if err := fixture.pool.QueryRow(ctx, `
+		SELECT count(*) FROM inbox_item
+		WHERE workspace_id = $1 AND type = 'autopilot_quota_exceeded'
+		  AND details->>'source' = 'api'
+		  AND details->>'notice_key' = 'rejection_automated_interval'`, fixture.workspaceID).Scan(&apiIntervalNotices); err != nil {
+		t.Fatalf("count API interval rejection notices: %v", err)
+	}
+	if apiIntervalNotices != 3 {
+		t.Fatalf("API interval rejection rows = %d, want one affected-audience delivery", apiIntervalNotices)
+	}
 
 	wantSchedule := map[string]int{
 		util.UUIDToString(fixture.publisherID): 2,
@@ -399,9 +471,9 @@ func TestAutopilotQuotaRejectionNoticeAudiences(t *testing.T) {
 		util.UUIDToString(uninvolvedID):        1,
 	}
 	wantManual := map[string]int{
-		util.UUIDToString(fixture.publisherID): 1,
-		util.UUIDToString(adminID):             1,
-		util.UUIDToString(actorID):             1,
+		util.UUIDToString(fixture.publisherID): 2,
+		util.UUIDToString(adminID):             2,
+		util.UUIDToString(actorID):             2,
 		util.UUIDToString(subscriberID):        0,
 		util.UUIDToString(uninvolvedID):        0,
 	}

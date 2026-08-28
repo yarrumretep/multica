@@ -52,13 +52,6 @@ export function isQuickCreateOutcome(type: InboxItem["type"]): boolean {
   return type === "quick_create_failed" || type === "quick_create_unconfirmed";
 }
 
-export function isAutopilotSystemNotice(type: InboxItem["type"]): boolean {
-  return (
-    type === "autopilot_quota_warning" ||
-    type === "autopilot_quota_exceeded"
-  );
-}
-
 export function isAutopilotQuotaNotice(type: InboxItem["type"]): boolean {
   return (
     type === "autopilot_quota_warning" ||

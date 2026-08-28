@@ -93,7 +93,6 @@ import { useTypeLabels } from "./inbox-detail-label";
 import {
   getInboxDisplayTitle,
   isAutopilotQuotaNotice,
-  isAutopilotSystemNotice,
   isQuickCreateOutcome,
   resolveDetailItem,
 } from "./inbox-display";
@@ -712,7 +711,7 @@ export function InboxPage() {
   ) : detailItem ? (
     <div className="p-6">
       <h2 className="text-title font-semibold">
-        {isAutopilotSystemNotice(detailItem.type)
+        {isAutopilotQuotaNotice(detailItem.type)
           ? typeLabels[detailItem.type]
           : getInboxDisplayTitle(detailItem)}
       </h2>

@@ -61,7 +61,28 @@ func (s *AutopilotService) deliverAutopilotQuotaThresholdNotices(
 	params db.CreateAutopilotRunParams,
 	actorUserID pgtype.UUID,
 ) {
-	if policy.action != entitlement.ActionEnforce || policy.notifications == nil {
+	if policy.action != entitlement.ActionEnforce || policy.notifications == nil ||
+		len(policy.notifications.Thresholds) == 0 {
+		return
+	}
+	// Admission just committed this period row. Read it without taking the
+	// admission lock first so runs that have not reached a threshold, or have
+	// already delivered every threshold, do not pay for another transaction and
+	// period-row lock. The write transaction still reloads under lock below.
+	period, err := s.Queries.GetAutopilotQuotaPeriod(ctx, db.GetAutopilotQuotaPeriodParams{
+		WorkspaceID: workspaceID,
+		PeriodStart: pgtype.Timestamptz{Time: policy.periodStart, Valid: true},
+		PeriodEnd:   pgtype.Timestamptz{Time: policy.periodEnd, Valid: true},
+	})
+	if err != nil {
+		slog.Warn("autopilot quota threshold notice preflight failed; admission remains committed",
+			"workspace_id", util.UUIDToString(workspaceID),
+			"autopilot_id", util.UUIDToString(params.AutopilotID),
+			"error", err,
+		)
+		return
+	}
+	if !autopilotQuotaHasPendingThreshold(period, policy.notifications.Thresholds) {
 		return
 	}
 	items, err := s.createAutopilotQuotaThresholdNotices(ctx, policy, workspaceID, source, params, actorUserID)
@@ -186,7 +207,7 @@ func (s *AutopilotService) createAutopilotQuotaRejectionNotices(
 	}
 
 	firstAlreadyNotified := autopilotQuotaThresholdWasNotified(period, autopilotQuotaFirstRejectionNoticeKey)
-	automated := source == "schedule" || source == "webhook"
+	automated := source == "api" || source == "schedule" || source == "webhook"
 	notifiedAt := s.autopilotQuotaNoticeNow()
 	if automated && firstAlreadyNotified {
 		lastNotifiedAt, ok := autopilotQuotaAutomatedRejectionNotifiedAt(period, params.AutopilotID)
@@ -265,6 +286,16 @@ func autopilotQuotaThresholdWasNotified(period db.AutopilotQuotaPeriod, key stri
 		return false
 	}
 	return value
+}
+
+func autopilotQuotaHasPendingThreshold(period db.AutopilotQuotaPeriod, thresholds []entitlement.NotificationThreshold) bool {
+	total := period.UsedCount + period.ReservedCount
+	for _, threshold := range thresholds {
+		if total >= int64(threshold.AtCount) && !autopilotQuotaThresholdWasNotified(period, threshold.Key) {
+			return true
+		}
+	}
+	return false
 }
 
 func autopilotQuotaAutomatedRejectionNotifiedAt(period db.AutopilotQuotaPeriod, autopilotID pgtype.UUID) (time.Time, bool) {

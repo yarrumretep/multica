@@ -36,10 +36,20 @@ The client reads:
   downgrade of an expired cached `enforce` instruction.
 - `gates.*.notifications`: an optional, additive delivery policy. The autopilot
   quota consumer recognizes ordered count thresholds, `every_attempt`
-  rejection delivery, and Cloud's minimum interval for automated rejection
-  notices. A malformed notification policy is ignored without invalidating an
+  rejection delivery, and Cloud's minimum interval for API, schedule, and
+  webhook rejection notices. Those machine-facing sources are coalesced per
+  autopilot; the first rejection remains immediate. The authenticated Run Now
+  HTTP route is classified as `manual` because it carries a direct-human actor
+  and returns a synchronous 429, so its Inbox notice remains per attempt by
+  design. A malformed notification policy is ignored without invalidating an
   otherwise valid enforcement gate. An empty threshold list is valid for small
   limits where only rejection notices can be useful.
+
+Deploy Cloud policy revision 2 before the Multica consumer. The consumer treats
+a missing or non-positive automated rejection interval as a malformed optional
+notification policy and silently omits notices while continuing to enforce the
+quota. The reverse order is safe because older consumers ignore the additive
+notification fields.
 
 Responses tolerate unknown JSON fields for additive compatibility. Unknown
 schema/action, malformed fields, missing gates, HTTP failures, and timeouts fail

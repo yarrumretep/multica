@@ -12,7 +12,7 @@ import type { InboxView } from "./inbox-view";
 import { InboxDetailLabel, useTypeLabels } from "./inbox-detail-label";
 import {
   getInboxDisplayTitle,
-  isAutopilotSystemNotice,
+  isAutopilotQuotaNotice,
 } from "./inbox-display";
 import { useInboxContextMenu } from "./inbox-context-menu";
 import { useStatusLabel } from "../../issues/utils/status-label";
@@ -72,7 +72,7 @@ export function InboxListItem({
       ? paths.workspace(slug).issueDetail(item.issue_id)
       : null;
   const intentNavigate = useIntentNavigate();
-  const displayTitle = isAutopilotSystemNotice(item.type)
+  const displayTitle = isAutopilotQuotaNotice(item.type)
     ? typeLabels[item.type]
     : getInboxDisplayTitle(item);
   const isArchivedView = view === "archived";
