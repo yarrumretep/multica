@@ -228,8 +228,9 @@ type wireGate struct {
 }
 
 type wireNotificationPolicy struct {
-	Thresholds  []wireNotificationThreshold `json:"thresholds"`
-	OnRejection string                      `json:"on_rejection"`
+	Thresholds                           []wireNotificationThreshold `json:"thresholds"`
+	OnRejection                          string                      `json:"on_rejection"`
+	AutomatedRejectionMinIntervalSeconds int64                       `json:"automated_rejection_min_interval_seconds"`
 }
 
 type wireNotificationThreshold struct {
@@ -351,7 +352,9 @@ func normalizeGate(name GateName, wire wireGate) (Gate, error) {
 // notification object must never invalidate the enforcement gate and fail open
 // the underlying quota, so it is dropped independently.
 func normalizeNotificationPolicy(wire *wireNotificationPolicy, limit int) *NotificationPolicy {
-	if wire == nil || wire.OnRejection != NotificationEveryAttempt || len(wire.Thresholds) == 0 {
+	if wire == nil || wire.OnRejection != NotificationEveryAttempt ||
+		wire.AutomatedRejectionMinIntervalSeconds <= 0 ||
+		wire.AutomatedRejectionMinIntervalSeconds > int64(time.Duration(1<<63-1)/time.Second) {
 		return nil
 	}
 	thresholds := make([]NotificationThreshold, 0, len(wire.Thresholds))
@@ -360,7 +363,7 @@ func normalizeNotificationPolicy(wire *wireNotificationPolicy, limit int) *Notif
 	for _, threshold := range wire.Thresholds {
 		key := strings.TrimSpace(threshold.Key)
 		if key == "" || threshold.Percent <= 0 || threshold.Percent >= 100 ||
-			threshold.AtCount <= 0 || threshold.AtCount > limit || threshold.AtCount < previousCount {
+			threshold.AtCount <= 0 || threshold.AtCount >= limit || threshold.AtCount <= previousCount {
 			return nil
 		}
 		if _, exists := seen[key]; exists {
@@ -372,7 +375,11 @@ func normalizeNotificationPolicy(wire *wireNotificationPolicy, limit int) *Notif
 			Key: key, Percent: threshold.Percent, AtCount: threshold.AtCount,
 		})
 	}
-	return &NotificationPolicy{Thresholds: thresholds, OnRejection: wire.OnRejection}
+	return &NotificationPolicy{
+		Thresholds:                    thresholds,
+		OnRejection:                   wire.OnRejection,
+		AutomatedRejectionMinInterval: time.Duration(wire.AutomatedRejectionMinIntervalSeconds) * time.Second,
+	}
 }
 
 func decisionFromEntry(entry cacheEntry, name GateName, reason Reason, stale bool) Decision {

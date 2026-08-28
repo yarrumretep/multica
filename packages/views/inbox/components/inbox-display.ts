@@ -54,7 +54,6 @@ export function isQuickCreateOutcome(type: InboxItem["type"]): boolean {
 
 export function isAutopilotSystemNotice(type: InboxItem["type"]): boolean {
   return (
-    type === "autopilot_paused" ||
     type === "autopilot_quota_warning" ||
     type === "autopilot_quota_exceeded"
   );

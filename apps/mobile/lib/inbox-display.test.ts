@@ -65,4 +65,16 @@ describe("getInboxDisplayTitle", () => {
       ),
     ).toBe("Autopilot usage warning");
   });
+
+  it("keeps paused autopilot copy on the server fallback path", () => {
+    expect(
+      getInboxDisplayTitle(
+        item({
+          issue_id: null,
+          type: "autopilot_paused",
+          title: "Paused after repeated failures",
+        }),
+      ),
+    ).toBe("Paused after repeated failures");
+  });
 });

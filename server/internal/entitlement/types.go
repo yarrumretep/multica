@@ -62,8 +62,9 @@ type Gate struct {
 }
 
 type NotificationPolicy struct {
-	Thresholds  []NotificationThreshold
-	OnRejection string
+	Thresholds                    []NotificationThreshold
+	OnRejection                   string
+	AutomatedRejectionMinInterval time.Duration
 }
 
 type NotificationThreshold struct {
@@ -128,8 +129,9 @@ func cloneGate(in Gate) Gate {
 	}
 	if in.Notifications != nil {
 		out.Notifications = &NotificationPolicy{
-			OnRejection: in.Notifications.OnRejection,
-			Thresholds:  append([]NotificationThreshold(nil), in.Notifications.Thresholds...),
+			OnRejection:                   in.Notifications.OnRejection,
+			AutomatedRejectionMinInterval: in.Notifications.AutomatedRejectionMinInterval,
+			Thresholds:                    append([]NotificationThreshold(nil), in.Notifications.Thresholds...),
 		}
 	}
 	return out

@@ -49,7 +49,25 @@ RETURNING *;
 
 -- name: MarkAutopilotQuotaThresholdNotified :one
 UPDATE autopilot_quota_period
-SET notified_thresholds = notified_thresholds || jsonb_build_object(@threshold_key::text, true),
+SET notified_thresholds =
+        CASE WHEN jsonb_typeof(notified_thresholds) = 'object'
+            THEN notified_thresholds ELSE '{}'::jsonb END
+        || jsonb_build_object(@threshold_key::text, true),
+    updated_at = now()
+WHERE workspace_id = @workspace_id
+  AND period_start = @period_start
+  AND period_end = @period_end
+RETURNING *;
+
+-- name: MarkAutopilotQuotaAutomatedRejectionNotified :one
+UPDATE autopilot_quota_period
+SET automated_rejection_notified_at = jsonb_set(
+        CASE WHEN jsonb_typeof(automated_rejection_notified_at) = 'object'
+            THEN automated_rejection_notified_at ELSE '{}'::jsonb END,
+        ARRAY[@autopilot_key::text],
+        to_jsonb(@notified_at::timestamptz),
+        true
+    ),
     updated_at = now()
 WHERE workspace_id = @workspace_id
   AND period_start = @period_start

@@ -191,17 +191,13 @@ func (s *AutopilotService) createAutopilotRunWithQuotaForActor(
 		if err != nil {
 			return db.AutopilotRun{}, false, fmt.Errorf("record blocked quota admission: %w", err)
 		}
-		noticeItems, updatedPeriod, err := s.createAutopilotQuotaRejectionNotices(
-			ctx, qtx, policy, period, params, actorUserID,
-		)
-		if err != nil {
-			return db.AutopilotRun{}, false, fmt.Errorf("create blocked quota notice: %w", err)
-		}
-		period = updatedPeriod
 		if err := tx.Commit(ctx); err != nil {
 			return db.AutopilotRun{}, false, fmt.Errorf("commit blocked quota admission: %w", err)
 		}
-		s.publishAutopilotQuotaInboxItems(noticeItems)
+		// Inbox delivery is presentation-only. It runs after the admission
+		// transaction commits so a malformed notification marker or failed insert
+		// can never turn the quota response into a 500 or roll back blocked counts.
+		s.deliverAutopilotQuotaRejectionNotices(ctx, policy, workspaceID, source, params, actorUserID)
 		s.recordAutopilotQuotaDecision(policy.action, source, "blocked")
 		return db.AutopilotRun{}, false, &AutopilotQuotaExceededError{
 			Used: period.UsedCount, Reserved: period.ReservedCount,
@@ -218,20 +214,12 @@ func (s *AutopilotService) createAutopilotRunWithQuotaForActor(
 	if err != nil {
 		return db.AutopilotRun{}, false, fmt.Errorf("create quota reservation: %w", err)
 	}
-	previousTotal := period.UsedCount + period.ReservedCount
 	period, err = qtx.IncrementAutopilotQuotaReserved(ctx, db.IncrementAutopilotQuotaReservedParams{
 		WorkspaceID: periodArgs.WorkspaceID, PeriodStart: periodArgs.PeriodStart, PeriodEnd: periodArgs.PeriodEnd,
 	})
 	if err != nil {
 		return db.AutopilotRun{}, false, fmt.Errorf("increment reserved quota: %w", err)
 	}
-	noticeItems, updatedPeriod, err := s.createAutopilotQuotaThresholdNotices(
-		ctx, qtx, policy, period, previousTotal, params, actorUserID,
-	)
-	if err != nil {
-		return db.AutopilotRun{}, false, fmt.Errorf("create quota threshold notice: %w", err)
-	}
-	period = updatedPeriod
 	params.QuotaReservationID = reservation.ID
 	run, err := qtx.CreateAutopilotRun(ctx, params)
 	if err != nil {
@@ -240,7 +228,9 @@ func (s *AutopilotService) createAutopilotRunWithQuotaForActor(
 	if err := tx.Commit(ctx); err != nil {
 		return db.AutopilotRun{}, false, fmt.Errorf("commit quota admission: %w", err)
 	}
-	s.publishAutopilotQuotaInboxItems(noticeItems)
+	// Threshold delivery is best-effort and retries unmarked thresholds after a
+	// later admission. The run and reservation are already durable here.
+	s.deliverAutopilotQuotaThresholdNotices(ctx, policy, workspaceID, source, params, actorUserID)
 	result := "admitted"
 	if wouldBlock {
 		result = "would_block"

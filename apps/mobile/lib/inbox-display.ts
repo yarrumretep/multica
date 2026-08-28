@@ -38,8 +38,6 @@ export function getInboxDisplayTitle(item: InboxItem): string {
   // Mobile is English-only today. Mirror web's localized system-notice titles
   // rather than exposing backend fallback copy that can include raw counts.
   switch (item.type) {
-    case "autopilot_paused":
-      return "Autopilot paused";
     case "autopilot_quota_warning":
       return "Autopilot usage warning";
     case "autopilot_quota_exceeded":

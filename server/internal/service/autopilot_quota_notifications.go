@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"time"
 
@@ -17,6 +18,11 @@ import (
 )
 
 const autopilotQuotaFirstRejectionNoticeKey = "rejection_first"
+
+const (
+	autopilotQuotaRejectionAttemptNoticeKey  = "rejection_attempt"
+	autopilotQuotaRejectionIntervalNoticeKey = "rejection_automated_interval"
+)
 
 type autopilotQuotaNoticeAudience int
 
@@ -40,41 +46,76 @@ type autopilotQuotaNoticeFacts struct {
 	ResetAt          time.Time
 }
 
-func (s *AutopilotService) createAutopilotQuotaThresholdNotices(
+func (s *AutopilotService) autopilotQuotaNoticeNow() time.Time {
+	if s.quotaNoticeNow != nil {
+		return s.quotaNoticeNow().UTC()
+	}
+	return time.Now().UTC()
+}
+
+func (s *AutopilotService) deliverAutopilotQuotaThresholdNotices(
 	ctx context.Context,
-	q *db.Queries,
 	policy autopilotQuotaPolicy,
-	period db.AutopilotQuotaPeriod,
-	previousTotal int64,
+	workspaceID pgtype.UUID,
+	source string,
 	params db.CreateAutopilotRunParams,
 	actorUserID pgtype.UUID,
-) ([]db.InboxItem, db.AutopilotQuotaPeriod, error) {
+) {
 	if policy.action != entitlement.ActionEnforce || policy.notifications == nil {
-		return nil, period, nil
+		return
+	}
+	items, err := s.createAutopilotQuotaThresholdNotices(ctx, policy, workspaceID, source, params, actorUserID)
+	if err != nil {
+		slog.Warn("autopilot quota threshold notice delivery failed; admission remains committed",
+			"workspace_id", util.UUIDToString(workspaceID),
+			"autopilot_id", util.UUIDToString(params.AutopilotID),
+			"error", err,
+		)
+		return
+	}
+	s.publishAutopilotQuotaInboxItems(items)
+}
+
+func (s *AutopilotService) createAutopilotQuotaThresholdNotices(
+	ctx context.Context,
+	policy autopilotQuotaPolicy,
+	workspaceID pgtype.UUID,
+	source string,
+	params db.CreateAutopilotRunParams,
+	actorUserID pgtype.UUID,
+) ([]db.InboxItem, error) {
+	tx, err := s.TxStarter.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin quota threshold notice: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	q := s.Queries.WithTx(tx)
+	period, err := q.EnsureAutopilotQuotaPeriod(ctx, db.EnsureAutopilotQuotaPeriodParams{
+		WorkspaceID: workspaceID,
+		PeriodStart: pgtype.Timestamptz{Time: policy.periodStart, Valid: true},
+		PeriodEnd:   pgtype.Timestamptz{Time: policy.periodEnd, Valid: true},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("lock quota period for threshold notice: %w", err)
 	}
 
 	items := make([]db.InboxItem, 0)
 	for _, threshold := range policy.notifications.Thresholds {
-		if previousTotal >= int64(threshold.AtCount) ||
-			period.UsedCount+period.ReservedCount < int64(threshold.AtCount) {
+		if period.UsedCount+period.ReservedCount < int64(threshold.AtCount) {
 			continue
 		}
-		notified, err := autopilotQuotaThresholdWasNotified(period, threshold.Key)
-		if err != nil {
-			return nil, period, err
-		}
-		if notified {
+		if autopilotQuotaThresholdWasNotified(period, threshold.Key) {
 			continue
 		}
 
 		created, err := s.createAutopilotQuotaInboxItems(ctx, q, autopilotQuotaNoticeAllMembers, autopilotQuotaNoticeFacts{
 			Kind: "threshold", NoticeKey: threshold.Key, ThresholdPercent: threshold.Percent,
 			WorkspaceID: period.WorkspaceID, AutopilotID: params.AutopilotID, ActorUserID: actorUserID,
-			Source: params.Source, Used: period.UsedCount, Reserved: period.ReservedCount,
+			Source: source, Used: period.UsedCount, Reserved: period.ReservedCount,
 			Total: period.UsedCount + period.ReservedCount, Limit: policy.limit, ResetAt: policy.resetAt,
 		})
 		if err != nil {
-			return nil, period, err
+			return nil, err
 		}
 		if len(created) == 0 {
 			continue
@@ -86,42 +127,93 @@ func (s *AutopilotService) createAutopilotQuotaThresholdNotices(
 			PeriodEnd:    period.PeriodEnd,
 		})
 		if err != nil {
-			return nil, period, fmt.Errorf("mark autopilot quota threshold notified: %w", err)
+			return nil, fmt.Errorf("mark autopilot quota threshold notified: %w", err)
 		}
 		items = append(items, created...)
 	}
-	return items, period, nil
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit quota threshold notices: %w", err)
+	}
+	return items, nil
+}
+
+func (s *AutopilotService) deliverAutopilotQuotaRejectionNotices(
+	ctx context.Context,
+	policy autopilotQuotaPolicy,
+	workspaceID pgtype.UUID,
+	source string,
+	params db.CreateAutopilotRunParams,
+	actorUserID pgtype.UUID,
+) {
+	if policy.action != entitlement.ActionEnforce || policy.notifications == nil ||
+		policy.notifications.OnRejection != entitlement.NotificationEveryAttempt {
+		return
+	}
+	items, err := s.createAutopilotQuotaRejectionNotices(ctx, policy, workspaceID, source, params, actorUserID)
+	if err != nil {
+		slog.Warn("autopilot quota rejection notice delivery failed; quota rejection remains committed",
+			"workspace_id", util.UUIDToString(workspaceID),
+			"autopilot_id", util.UUIDToString(params.AutopilotID),
+			"source", source,
+			"error", err,
+		)
+		return
+	}
+	s.publishAutopilotQuotaInboxItems(items)
 }
 
 func (s *AutopilotService) createAutopilotQuotaRejectionNotices(
 	ctx context.Context,
-	q *db.Queries,
 	policy autopilotQuotaPolicy,
-	period db.AutopilotQuotaPeriod,
+	workspaceID pgtype.UUID,
+	source string,
 	params db.CreateAutopilotRunParams,
 	actorUserID pgtype.UUID,
-) ([]db.InboxItem, db.AutopilotQuotaPeriod, error) {
-	if policy.action != entitlement.ActionEnforce || policy.notifications == nil ||
-		policy.notifications.OnRejection != entitlement.NotificationEveryAttempt {
-		return nil, period, nil
+) ([]db.InboxItem, error) {
+	tx, err := s.TxStarter.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin quota rejection notice: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	q := s.Queries.WithTx(tx)
+	period, err := q.EnsureAutopilotQuotaPeriod(ctx, db.EnsureAutopilotQuotaPeriodParams{
+		WorkspaceID: workspaceID,
+		PeriodStart: pgtype.Timestamptz{Time: policy.periodStart, Valid: true},
+		PeriodEnd:   pgtype.Timestamptz{Time: policy.periodEnd, Valid: true},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("lock quota period for rejection notice: %w", err)
 	}
 
-	firstAlreadyNotified, err := autopilotQuotaThresholdWasNotified(period, autopilotQuotaFirstRejectionNoticeKey)
-	if err != nil {
-		return nil, period, err
+	firstAlreadyNotified := autopilotQuotaThresholdWasNotified(period, autopilotQuotaFirstRejectionNoticeKey)
+	automated := source == "schedule" || source == "webhook"
+	notifiedAt := s.autopilotQuotaNoticeNow()
+	if automated && firstAlreadyNotified {
+		lastNotifiedAt, ok := autopilotQuotaAutomatedRejectionNotifiedAt(period, params.AutopilotID)
+		if ok && notifiedAt.Before(lastNotifiedAt.Add(policy.notifications.AutomatedRejectionMinInterval)) {
+			if err := tx.Commit(ctx); err != nil {
+				return nil, fmt.Errorf("commit throttled quota rejection notice: %w", err)
+			}
+			return nil, nil
+		}
 	}
+
 	audience := autopilotQuotaNoticeAffectedMembers
+	noticeKey := autopilotQuotaRejectionAttemptNoticeKey
 	if !firstAlreadyNotified {
 		audience = autopilotQuotaNoticeAllMembers
+		noticeKey = autopilotQuotaFirstRejectionNoticeKey
+	} else if automated {
+		noticeKey = autopilotQuotaRejectionIntervalNoticeKey
 	}
 	items, err := s.createAutopilotQuotaInboxItems(ctx, q, audience, autopilotQuotaNoticeFacts{
-		Kind: "rejected", NoticeKey: autopilotQuotaFirstRejectionNoticeKey,
+		Kind: "rejected", NoticeKey: noticeKey,
 		WorkspaceID: period.WorkspaceID, AutopilotID: params.AutopilotID, ActorUserID: actorUserID,
-		Source: params.Source, Used: period.UsedCount, Reserved: period.ReservedCount,
+		Source: source, Used: period.UsedCount, Reserved: period.ReservedCount,
 		Total: period.UsedCount + period.ReservedCount, Limit: policy.limit, ResetAt: policy.resetAt,
 	})
 	if err != nil {
-		return nil, period, err
+		return nil, err
 	}
 	if !firstAlreadyNotified && len(items) > 0 {
 		period, err = q.MarkAutopilotQuotaThresholdNotified(ctx, db.MarkAutopilotQuotaThresholdNotifiedParams{
@@ -131,21 +223,72 @@ func (s *AutopilotService) createAutopilotQuotaRejectionNotices(
 			PeriodEnd:    period.PeriodEnd,
 		})
 		if err != nil {
-			return nil, period, fmt.Errorf("mark first autopilot quota rejection notified: %w", err)
+			return nil, fmt.Errorf("mark first autopilot quota rejection notified: %w", err)
 		}
 	}
-	return items, period, nil
+	if automated && len(items) > 0 {
+		period, err = q.MarkAutopilotQuotaAutomatedRejectionNotified(ctx, db.MarkAutopilotQuotaAutomatedRejectionNotifiedParams{
+			AutopilotKey: util.UUIDToString(params.AutopilotID),
+			NotifiedAt:   pgtype.Timestamptz{Time: notifiedAt, Valid: true},
+			WorkspaceID:  period.WorkspaceID,
+			PeriodStart:  period.PeriodStart,
+			PeriodEnd:    period.PeriodEnd,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("mark automated autopilot quota rejection notified: %w", err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit quota rejection notices: %w", err)
+	}
+	return items, nil
 }
 
-func autopilotQuotaThresholdWasNotified(period db.AutopilotQuotaPeriod, key string) (bool, error) {
-	notified := make(map[string]bool)
+func autopilotQuotaThresholdWasNotified(period db.AutopilotQuotaPeriod, key string) bool {
 	if len(period.NotifiedThresholds) == 0 {
-		return false, nil
+		return false
 	}
+	var notified map[string]json.RawMessage
 	if err := json.Unmarshal(period.NotifiedThresholds, &notified); err != nil {
-		return false, fmt.Errorf("decode autopilot quota notified thresholds: %w", err)
+		slog.Warn("autopilot quota threshold notification state is malformed; treating it as empty",
+			"workspace_id", util.UUIDToString(period.WorkspaceID), "error", err)
+		return false
 	}
-	return notified[key], nil
+	var value bool
+	raw, ok := notified[key]
+	if !ok {
+		return false
+	}
+	if err := json.Unmarshal(raw, &value); err != nil {
+		slog.Warn("autopilot quota threshold notification marker is malformed; treating it as unset",
+			"workspace_id", util.UUIDToString(period.WorkspaceID), "notice_key", key, "error", err)
+		return false
+	}
+	return value
+}
+
+func autopilotQuotaAutomatedRejectionNotifiedAt(period db.AutopilotQuotaPeriod, autopilotID pgtype.UUID) (time.Time, bool) {
+	if len(period.AutomatedRejectionNotifiedAt) == 0 {
+		return time.Time{}, false
+	}
+	var notified map[string]json.RawMessage
+	if err := json.Unmarshal(period.AutomatedRejectionNotifiedAt, &notified); err != nil {
+		slog.Warn("automated autopilot quota rejection notification state is malformed; treating it as empty",
+			"workspace_id", util.UUIDToString(period.WorkspaceID), "error", err)
+		return time.Time{}, false
+	}
+	key := util.UUIDToString(autopilotID)
+	raw, ok := notified[key]
+	if !ok {
+		return time.Time{}, false
+	}
+	var value time.Time
+	if err := json.Unmarshal(raw, &value); err != nil {
+		slog.Warn("automated autopilot quota rejection notification marker is malformed; treating it as unset",
+			"workspace_id", util.UUIDToString(period.WorkspaceID), "autopilot_id", key, "error", err)
+		return time.Time{}, false
+	}
+	return value.UTC(), true
 }
 
 func (s *AutopilotService) createAutopilotQuotaInboxItems(
@@ -190,19 +333,25 @@ func (s *AutopilotService) createAutopilotQuotaInboxItems(
 		severity = "action_required"
 	}
 
-	details, err := json.Marshal(map[string]string{
-		"notice_kind":       facts.Kind,
-		"notice_key":        facts.NoticeKey,
-		"threshold_percent": strconv.Itoa(facts.ThresholdPercent),
-		"used":              strconv.FormatInt(facts.Used, 10),
-		"reserved":          strconv.FormatInt(facts.Reserved, 10),
-		"total":             strconv.FormatInt(facts.Total, 10),
-		"limit":             strconv.FormatInt(facts.Limit, 10),
-		"reset_at":          facts.ResetAt.UTC().Format(time.RFC3339),
-		"source":            facts.Source,
-		"autopilot_id":      util.UUIDToString(facts.AutopilotID),
-		"autopilot_title":   autopilotTitle,
-	})
+	// title/body are complete English fallbacks for clients and future delivery
+	// channels that do not localize structured details. In-app clients render
+	// localized quota copy from these facts.
+	detailValues := map[string]string{
+		"notice_kind":     facts.Kind,
+		"notice_key":      facts.NoticeKey,
+		"used":            strconv.FormatInt(facts.Used, 10),
+		"reserved":        strconv.FormatInt(facts.Reserved, 10),
+		"total":           strconv.FormatInt(facts.Total, 10),
+		"limit":           strconv.FormatInt(facts.Limit, 10),
+		"reset_at":        facts.ResetAt.UTC().Format(time.RFC3339),
+		"source":          facts.Source,
+		"autopilot_id":    util.UUIDToString(facts.AutopilotID),
+		"autopilot_title": autopilotTitle,
+	}
+	if facts.Kind == "threshold" {
+		detailValues["threshold_percent"] = strconv.Itoa(facts.ThresholdPercent)
+	}
+	details, err := json.Marshal(detailValues)
 	if err != nil {
 		return nil, fmt.Errorf("marshal autopilot quota inbox details: %w", err)
 	}
@@ -246,8 +395,12 @@ func autopilotQuotaNoticeRecipients(
 			selected[id] = true
 		}
 	}
+	autopilot, err := q.GetAutopilot(ctx, autopilotID)
+	if err != nil {
+		return nil, "", fmt.Errorf("load autopilot for quota notice: %w", err)
+	}
 	if audience == autopilotQuotaNoticeAllMembers {
-		return selectedAutopilotQuotaRecipients(members, selected), "", nil
+		return selectedAutopilotQuotaRecipients(members, selected), autopilot.Title, nil
 	}
 
 	directActorSelected := false
@@ -258,10 +411,6 @@ func autopilotQuotaNoticeRecipients(
 		}
 	}
 
-	autopilot, err := q.GetAutopilot(ctx, autopilotID)
-	if err != nil {
-		return nil, "", fmt.Errorf("load rejected autopilot for quota notice: %w", err)
-	}
 	// API and legacy manual calls do not always carry a member actor. In that
 	// case, use the automated-trigger audience instead of notifying managers
 	// alone, so the autopilot's current stakeholders still see each rejection.

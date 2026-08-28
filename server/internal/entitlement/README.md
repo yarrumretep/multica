@@ -17,8 +17,10 @@ instead of deployment configuration.
 The client reads:
 
 - `schema_version`: only version 1 is accepted.
-- `policy_revision`: the policy protocol generation, currently fixed at `2` by
-  Cloud and not deployment configuration.
+- `policy_revision`: the effective-instruction generation, currently fixed at
+  `2` by Cloud and not deployment configuration. Cloud advances it when the
+  meaning or set of actionable instructions changes, including additive
+  instructions; `schema_version` changes only for incompatible wire parsing.
 - `subscription_version`: the workspace's monotonic subscription revision. A
   response that moves this revision backwards cannot replace a cached policy
   while it is still usable for fresh or stale decisions. After the bounded
@@ -33,9 +35,11 @@ The client reads:
   not expose an `observe` rollout mode; `observe` exists only as Multica's local
   downgrade of an expired cached `enforce` instruction.
 - `gates.*.notifications`: an optional, additive delivery policy. The autopilot
-  quota consumer recognizes ordered count thresholds and `every_attempt`
-  rejection delivery. A malformed notification policy is ignored without
-  invalidating an otherwise valid enforcement gate.
+  quota consumer recognizes ordered count thresholds, `every_attempt`
+  rejection delivery, and Cloud's minimum interval for automated rejection
+  notices. A malformed notification policy is ignored without invalidating an
+  otherwise valid enforcement gate. An empty threshold list is valid for small
+  limits where only rejection notices can be useful.
 
 Responses tolerate unknown JSON fields for additive compatibility. Unknown
 schema/action, malformed fields, missing gates, HTTP failures, and timeouts fail
@@ -83,12 +87,24 @@ the effective policy from subscription facts and authoritative limits.
 
 For an enforcing autopilot policy, each Cloud-provided threshold is persisted
 once on the workspace quota-period row and delivered to all current workspace
-members. The first rejected run in a period is also delivered to all members.
-Later rejections are delivered on every attempt to the members most able to act:
+members. Usage is shared workspace state: broad early awareness lets members
+who create or trigger work coordinate before the hard limit, even though only
+owner/admin can upgrade. The first rejected run in a period is also delivered
+to all members. Later rejections are delivered to the members most able to act:
 owner/admin plus the triggering member for manual/API runs, or owner/admin plus
 the autopilot creator/subscribers for schedule/webhook runs and calls without a
-resolvable member actor. These notifications are issue-less Inbox items and are
-published only after their database transaction commits.
+resolvable member actor. Manual/API rejections follow `every_attempt`; automated
+schedule/webhook rejections are coalesced per autopilot using Cloud's minimum
+interval so a frequent schedule cannot flood Inbox.
+
+Quota admission and blocked-count transactions commit before a separate Inbox
+transaction begins. Inbox inserts and notification-state parsing are therefore
+best-effort presentation side effects: failures are logged and an unmarked
+threshold is retried later, but they cannot roll back a run, replace a quota
+error with a 500, or erase the blocked count. Issue-less Inbox items are
+published only after their own transaction commits. Stored English title/body
+remain complete fallback copy for clients and delivery channels without
+structured localization; in-app quota views localize from `details`.
 
 Future consumers should depend on the small `Provider` interface. Tests can use
 `server/internal/entitlement/entitlementtest.Stub` without Cloud.

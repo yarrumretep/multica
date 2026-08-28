@@ -34,12 +34,13 @@ type TxStarter interface {
 }
 
 type AutopilotService struct {
-	Queries      *db.Queries
-	TxStarter    TxStarter
-	Bus          *events.Bus
-	TaskSvc      *TaskService
-	Entitlements entitlement.Provider
-	QuotaMetrics AutopilotQuotaMetrics
+	Queries        *db.Queries
+	TxStarter      TxStarter
+	Bus            *events.Bus
+	TaskSvc        *TaskService
+	Entitlements   entitlement.Provider
+	QuotaMetrics   AutopilotQuotaMetrics
+	quotaNoticeNow func() time.Time
 }
 
 // DefaultAutopilotTriggerTimezone is the timezone used to render Autopilot
