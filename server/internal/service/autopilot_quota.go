@@ -230,7 +230,7 @@ func (s *AutopilotService) createAutopilotRunWithQuotaForActor(
 	}
 	// Threshold delivery is best-effort and retries unmarked thresholds after a
 	// later admission. The run and reservation are already durable here.
-	s.deliverAutopilotQuotaThresholdNotices(ctx, policy, workspaceID, source, params, actorUserID)
+	s.deliverAutopilotQuotaThresholdNotices(ctx, policy, period, source, params, actorUserID)
 	result := "admitted"
 	if wouldBlock {
 		result = "would_block"

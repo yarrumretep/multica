@@ -352,6 +352,42 @@ func TestAutopilotQuotaThresholdNoticeFastPathAvoidsWriteTransaction(t *testing.
 	}
 }
 
+func TestAutopilotQuotaThresholdNoticeFastPathUsesAdmissionSnapshot(t *testing.T) {
+	policy := autopilotQuotaPolicy{
+		action: entitlement.ActionEnforce,
+		notifications: &entitlement.NotificationPolicy{Thresholds: []entitlement.NotificationThreshold{
+			{Key: "usage_50", Percent: 50, AtCount: 5},
+		}},
+	}
+	tests := []struct {
+		name   string
+		period db.AutopilotQuotaPeriod
+	}{
+		{
+			name: "threshold not reached",
+			period: db.AutopilotQuotaPeriod{
+				ReservedCount: 4,
+			},
+		},
+		{
+			name: "threshold already delivered",
+			period: db.AutopilotQuotaPeriod{
+				ReservedCount: 5, NotifiedThresholds: []byte(`{"usage_50":true}`),
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Queries and TxStarter are intentionally nil: a fast-path delivery
+			// must decide entirely from the admission snapshot.
+			service := &AutopilotService{}
+			service.deliverAutopilotQuotaThresholdNotices(
+				context.Background(), policy, tt.period, "api", db.CreateAutopilotRunParams{}, pgtype.UUID{},
+			)
+		})
+	}
+}
+
 func TestAutopilotQuotaRejectionNoticeAudiences(t *testing.T) {
 	fixture := newAutopilotQuotaFixture(t, entitlement.ActionEnforce, 2)
 	fixture.setNotificationPolicy(2,

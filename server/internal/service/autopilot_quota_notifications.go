@@ -56,7 +56,7 @@ func (s *AutopilotService) autopilotQuotaNoticeNow() time.Time {
 func (s *AutopilotService) deliverAutopilotQuotaThresholdNotices(
 	ctx context.Context,
 	policy autopilotQuotaPolicy,
-	workspaceID pgtype.UUID,
+	period db.AutopilotQuotaPeriod,
 	source string,
 	params db.CreateAutopilotRunParams,
 	actorUserID pgtype.UUID,
@@ -65,30 +65,17 @@ func (s *AutopilotService) deliverAutopilotQuotaThresholdNotices(
 		len(policy.notifications.Thresholds) == 0 {
 		return
 	}
-	// Admission just committed this period row. Read it without taking the
-	// admission lock first so runs that have not reached a threshold, or have
-	// already delivered every threshold, do not pay for another transaction and
-	// period-row lock. The write transaction still reloads under lock below.
-	period, err := s.Queries.GetAutopilotQuotaPeriod(ctx, db.GetAutopilotQuotaPeriodParams{
-		WorkspaceID: workspaceID,
-		PeriodStart: pgtype.Timestamptz{Time: policy.periodStart, Valid: true},
-		PeriodEnd:   pgtype.Timestamptz{Time: policy.periodEnd, Valid: true},
-	})
-	if err != nil {
-		slog.Warn("autopilot quota threshold notice preflight failed; admission remains committed",
-			"workspace_id", util.UUIDToString(workspaceID),
-			"autopilot_id", util.UUIDToString(params.AutopilotID),
-			"error", err,
-		)
-		return
-	}
+	// IncrementAutopilotQuotaReserved returned this post-increment snapshot
+	// under the admission lock. Reuse it after commit so the common path needs no
+	// follow-up query or transaction. The delivery transaction still reloads the
+	// period under lock before writing markers, preserving race safety.
 	if !autopilotQuotaHasPendingThreshold(period, policy.notifications.Thresholds) {
 		return
 	}
-	items, err := s.createAutopilotQuotaThresholdNotices(ctx, policy, workspaceID, source, params, actorUserID)
+	items, err := s.createAutopilotQuotaThresholdNotices(ctx, policy, period.WorkspaceID, source, params, actorUserID)
 	if err != nil {
 		slog.Warn("autopilot quota threshold notice delivery failed; admission remains committed",
-			"workspace_id", util.UUIDToString(workspaceID),
+			"workspace_id", util.UUIDToString(period.WorkspaceID),
 			"autopilot_id", util.UUIDToString(params.AutopilotID),
 			"error", err,
 		)
