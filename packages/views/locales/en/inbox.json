@@ -50,6 +50,11 @@
     "original_input": "Original input",
     "retry_with_context": "Retry with context",
     "edit_advanced": "Edit as advanced form",
+    "autopilot_quota_warning_body": "This workspace has used or is running {{total}} of {{limit}} autopilot runs for the current period ({{percent}}%). The allowance resets {{resetAt}}.",
+    "autopilot_quota_exceeded_body": "This workspace has reached its limit of {{limit}} autopilot runs for the current period. This execution was not started. The allowance resets {{resetAt}}.",
+    "autopilot_quota_exceeded_autopilot_body": "Autopilot “{{autopilot}}” was not started because this workspace has reached its limit of {{limit}} runs for the current period. The allowance resets {{resetAt}}.",
+    "autopilot_quota_upgrade": "View upgrade options",
+    "autopilot_quota_contact_admin": "Contact a workspace owner or admin to upgrade the plan.",
     "archive": "Archive",
     "unarchive": "Unarchive"
   },
@@ -72,7 +77,10 @@
     "reaction_added": "Reacted",
     "quick_create_done": "Created with agent",
     "quick_create_failed": "Create with agent failed",
-    "quick_create_unconfirmed": "Create with agent unconfirmed"
+    "quick_create_unconfirmed": "Create with agent unconfirmed",
+    "autopilot_paused": "Autopilot paused",
+    "autopilot_quota_warning": "Autopilot usage warning",
+    "autopilot_quota_exceeded": "Autopilot run limit reached"
   },
   "labels": {
     "set_status_to": "Set status to",
@@ -85,7 +93,9 @@
     "removed_due_date": "Removed due date",
     "reacted_to_comment": "Reacted {{emoji}} to your comment",
     "created_with_agent": "Created with agent: {{identifier}}",
-    "failed_with_detail": "Failed: {{detail}}"
+    "failed_with_detail": "Failed: {{detail}}",
+    "autopilot_quota_usage": "{{percent}}% of autopilot runs used",
+    "autopilot_quota_blocked": "Run blocked because the limit was reached"
   },
   "toasts": {
     "source_context_retry_started": "Retry started with the original context",

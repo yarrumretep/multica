@@ -52,6 +52,21 @@ export function isQuickCreateOutcome(type: InboxItem["type"]): boolean {
   return type === "quick_create_failed" || type === "quick_create_unconfirmed";
 }
 
+export function isAutopilotSystemNotice(type: InboxItem["type"]): boolean {
+  return (
+    type === "autopilot_paused" ||
+    type === "autopilot_quota_warning" ||
+    type === "autopilot_quota_exceeded"
+  );
+}
+
+export function isAutopilotQuotaNotice(type: InboxItem["type"]): boolean {
+  return (
+    type === "autopilot_quota_warning" ||
+    type === "autopilot_quota_exceeded"
+  );
+}
+
 export function getQuickCreateOutcomeDetail(item: InboxItem): string {
   const details = item.details ?? {};
   return singleLine(details.error) || singleLine(item.body);

@@ -219,11 +219,23 @@ type wirePolicy struct {
 }
 
 type wireGate struct {
-	Action      string     `json:"action"`
-	Limit       *int       `json:"limit"`
-	PeriodStart *time.Time `json:"period_start"`
-	PeriodEnd   *time.Time `json:"period_end"`
-	ResetAt     *time.Time `json:"reset_at"`
+	Action        string                  `json:"action"`
+	Limit         *int                    `json:"limit"`
+	PeriodStart   *time.Time              `json:"period_start"`
+	PeriodEnd     *time.Time              `json:"period_end"`
+	ResetAt       *time.Time              `json:"reset_at"`
+	Notifications *wireNotificationPolicy `json:"notifications"`
+}
+
+type wireNotificationPolicy struct {
+	Thresholds  []wireNotificationThreshold `json:"thresholds"`
+	OnRejection string                      `json:"on_rejection"`
+}
+
+type wireNotificationThreshold struct {
+	Key     string `json:"key"`
+	Percent int    `json:"percent"`
+	AtCount int    `json:"at_count"`
 }
 
 type fetchedPolicy struct {
@@ -331,7 +343,36 @@ func normalizeGate(name GateName, wire wireGate) (Gate, error) {
 		start, end, reset := *wire.PeriodStart, *wire.PeriodEnd, *wire.ResetAt
 		gate.PeriodStart, gate.PeriodEnd, gate.ResetAt = &start, &end, &reset
 	}
+	gate.Notifications = normalizeNotificationPolicy(wire.Notifications, limit)
 	return gate, nil
+}
+
+// Notification instructions are additive presentation policy. A malformed
+// notification object must never invalidate the enforcement gate and fail open
+// the underlying quota, so it is dropped independently.
+func normalizeNotificationPolicy(wire *wireNotificationPolicy, limit int) *NotificationPolicy {
+	if wire == nil || wire.OnRejection != NotificationEveryAttempt || len(wire.Thresholds) == 0 {
+		return nil
+	}
+	thresholds := make([]NotificationThreshold, 0, len(wire.Thresholds))
+	seen := make(map[string]struct{}, len(wire.Thresholds))
+	previousCount := 0
+	for _, threshold := range wire.Thresholds {
+		key := strings.TrimSpace(threshold.Key)
+		if key == "" || threshold.Percent <= 0 || threshold.Percent >= 100 ||
+			threshold.AtCount <= 0 || threshold.AtCount > limit || threshold.AtCount < previousCount {
+			return nil
+		}
+		if _, exists := seen[key]; exists {
+			return nil
+		}
+		seen[key] = struct{}{}
+		previousCount = threshold.AtCount
+		thresholds = append(thresholds, NotificationThreshold{
+			Key: key, Percent: threshold.Percent, AtCount: threshold.AtCount,
+		})
+	}
+	return &NotificationPolicy{Thresholds: thresholds, OnRejection: wire.OnRejection}
 }
 
 func decisionFromEntry(entry cacheEntry, name GateName, reason Reason, stale bool) Decision {

@@ -108,6 +108,48 @@ func TestGateCachesByWorkspaceAndClonesResults(t *testing.T) {
 	if autopilot.Gate.Action != ActionEnforce || calls.Load() != 1 {
 		t.Fatalf("autopilot = %+v, calls = %d", autopilot, calls.Load())
 	}
+	if autopilot.Gate.Notifications == nil || len(autopilot.Gate.Notifications.Thresholds) != 3 {
+		t.Fatalf("autopilot notifications = %+v", autopilot.Gate.Notifications)
+	}
+	autopilot.Gate.Notifications.Thresholds[0].AtCount = 999
+	cloned := client.Gate(context.Background(), workspaceID, GateAutopilotRuns)
+	if cloned.Gate.Notifications == nil || cloned.Gate.Notifications.Thresholds[0].AtCount != 12 {
+		t.Fatalf("cloned notifications = %+v", cloned.Gate.Notifications)
+	}
+}
+
+func TestNotificationPolicyDoesNotControlQuotaValidity(t *testing.T) {
+	limit := 100
+	start := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+	end := start.AddDate(0, 1, 0)
+	base := wireGate{
+		Action: string(ActionEnforce), Limit: &limit,
+		PeriodStart: &start, PeriodEnd: &end, ResetAt: &end,
+	}
+
+	valid := base
+	valid.Notifications = &wireNotificationPolicy{
+		OnRejection: NotificationEveryAttempt,
+		Thresholds: []wireNotificationThreshold{
+			{Key: "usage_50", Percent: 50, AtCount: 50},
+			{Key: "usage_80", Percent: 80, AtCount: 80},
+			{Key: "usage_90", Percent: 90, AtCount: 90},
+		},
+	}
+	gate, err := normalizeGate(GateAutopilotRuns, valid)
+	if err != nil || gate.Notifications == nil || len(gate.Notifications.Thresholds) != 3 {
+		t.Fatalf("valid notification gate = %+v, err = %v", gate, err)
+	}
+
+	malformed := base
+	malformed.Notifications = &wireNotificationPolicy{
+		OnRejection: "future_mode",
+		Thresholds:  []wireNotificationThreshold{{Key: "usage_50", Percent: 50, AtCount: 50}},
+	}
+	gate, err = normalizeGate(GateAutopilotRuns, malformed)
+	if err != nil || gate.Action != ActionEnforce || gate.Notifications != nil {
+		t.Fatalf("malformed notification gate = %+v, err = %v; want enforced quota without notices", gate, err)
+	}
 }
 
 func TestConcurrentWorkspaceMissesUseSingleflight(t *testing.T) {
@@ -586,6 +628,14 @@ func samplePolicy(policyRevision, subscriptionVersion, validForSeconds int64, is
 			string(GateAutopilotRuns): {
 				Action: string(ActionEnforce), Limit: &autopilotLimit,
 				PeriodStart: &periodStart, PeriodEnd: &periodEnd, ResetAt: &periodEnd,
+				Notifications: &wireNotificationPolicy{
+					OnRejection: NotificationEveryAttempt,
+					Thresholds: []wireNotificationThreshold{
+						{Key: "usage_50", Percent: 50, AtCount: 12},
+						{Key: "usage_80", Percent: 80, AtCount: 19},
+						{Key: "usage_90", Percent: 90, AtCount: 21},
+					},
+				},
 			},
 		},
 	}

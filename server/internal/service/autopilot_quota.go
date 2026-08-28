@@ -59,6 +59,7 @@ type autopilotQuotaPolicy struct {
 	resetAt             time.Time
 	policyRevision      int64
 	subscriptionVersion int64
+	notifications       *entitlement.NotificationPolicy
 }
 
 func newAutopilotIdempotencyKey() string { return uuid.NewString() }
@@ -100,6 +101,7 @@ func (s *AutopilotService) quotaPolicy(ctx context.Context, workspaceID pgtype.U
 		resetAt:             gate.ResetAt.UTC(),
 		policyRevision:      decision.PolicyRevision,
 		subscriptionVersion: decision.SubscriptionVersion,
+		notifications:       gate.Notifications,
 	}, true
 }
 
@@ -110,6 +112,18 @@ func (s *AutopilotService) createAutopilotRunWithQuota(
 	ctx context.Context,
 	workspaceID pgtype.UUID,
 	source, idempotencyKey string,
+	params db.CreateAutopilotRunParams,
+) (db.AutopilotRun, bool, error) {
+	return s.createAutopilotRunWithQuotaForActor(
+		ctx, workspaceID, source, idempotencyKey, pgtype.UUID{}, params,
+	)
+}
+
+func (s *AutopilotService) createAutopilotRunWithQuotaForActor(
+	ctx context.Context,
+	workspaceID pgtype.UUID,
+	source, idempotencyKey string,
+	actorUserID pgtype.UUID,
 	params db.CreateAutopilotRunParams,
 ) (db.AutopilotRun, bool, error) {
 	if !validAutopilotExecutionSource(source) {
@@ -170,15 +184,24 @@ func (s *AutopilotService) createAutopilotRunWithQuota(
 
 	wouldBlock := period.UsedCount+period.ReservedCount >= policy.limit
 	if wouldBlock && policy.action == entitlement.ActionEnforce {
-		if _, err := qtx.IncrementAutopilotQuotaBlocked(ctx, db.IncrementAutopilotQuotaBlockedParams{
+		period, err = qtx.IncrementAutopilotQuotaBlocked(ctx, db.IncrementAutopilotQuotaBlockedParams{
 			Source: source, WorkspaceID: workspaceID,
 			PeriodStart: periodArgs.PeriodStart, PeriodEnd: periodArgs.PeriodEnd,
-		}); err != nil {
+		})
+		if err != nil {
 			return db.AutopilotRun{}, false, fmt.Errorf("record blocked quota admission: %w", err)
 		}
+		noticeItems, updatedPeriod, err := s.createAutopilotQuotaRejectionNotices(
+			ctx, qtx, policy, period, params, actorUserID,
+		)
+		if err != nil {
+			return db.AutopilotRun{}, false, fmt.Errorf("create blocked quota notice: %w", err)
+		}
+		period = updatedPeriod
 		if err := tx.Commit(ctx); err != nil {
 			return db.AutopilotRun{}, false, fmt.Errorf("commit blocked quota admission: %w", err)
 		}
+		s.publishAutopilotQuotaInboxItems(noticeItems)
 		s.recordAutopilotQuotaDecision(policy.action, source, "blocked")
 		return db.AutopilotRun{}, false, &AutopilotQuotaExceededError{
 			Used: period.UsedCount, Reserved: period.ReservedCount,
@@ -195,11 +218,20 @@ func (s *AutopilotService) createAutopilotRunWithQuota(
 	if err != nil {
 		return db.AutopilotRun{}, false, fmt.Errorf("create quota reservation: %w", err)
 	}
-	if _, err := qtx.IncrementAutopilotQuotaReserved(ctx, db.IncrementAutopilotQuotaReservedParams{
+	previousTotal := period.UsedCount + period.ReservedCount
+	period, err = qtx.IncrementAutopilotQuotaReserved(ctx, db.IncrementAutopilotQuotaReservedParams{
 		WorkspaceID: periodArgs.WorkspaceID, PeriodStart: periodArgs.PeriodStart, PeriodEnd: periodArgs.PeriodEnd,
-	}); err != nil {
+	})
+	if err != nil {
 		return db.AutopilotRun{}, false, fmt.Errorf("increment reserved quota: %w", err)
 	}
+	noticeItems, updatedPeriod, err := s.createAutopilotQuotaThresholdNotices(
+		ctx, qtx, policy, period, previousTotal, params, actorUserID,
+	)
+	if err != nil {
+		return db.AutopilotRun{}, false, fmt.Errorf("create quota threshold notice: %w", err)
+	}
+	period = updatedPeriod
 	params.QuotaReservationID = reservation.ID
 	run, err := qtx.CreateAutopilotRun(ctx, params)
 	if err != nil {
@@ -208,6 +240,7 @@ func (s *AutopilotService) createAutopilotRunWithQuota(
 	if err := tx.Commit(ctx); err != nil {
 		return db.AutopilotRun{}, false, fmt.Errorf("commit quota admission: %w", err)
 	}
+	s.publishAutopilotQuotaInboxItems(noticeItems)
 	result := "admitted"
 	if wouldBlock {
 		result = "would_block"

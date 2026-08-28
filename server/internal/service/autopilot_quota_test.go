@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -99,6 +100,37 @@ func (f *autopilotQuotaFixture) setPolicy(action entitlement.Action, start, end 
 		},
 		PolicyRevision: 7, SubscriptionVersion: 11,
 	})
+}
+
+func (f *autopilotQuotaFixture) setNotificationPolicy(limit int, thresholds ...entitlement.NotificationThreshold) {
+	f.stub.Set(f.workspace, entitlement.GateAutopilotRuns, entitlement.Decision{
+		Gate: entitlement.Gate{
+			Action: entitlement.ActionEnforce, Limit: &limit,
+			PeriodStart: &f.periodStart, PeriodEnd: &f.periodEnd, ResetAt: &f.resetAt,
+			Notifications: &entitlement.NotificationPolicy{
+				Thresholds: thresholds, OnRejection: entitlement.NotificationEveryAttempt,
+			},
+		},
+		PolicyRevision: 8, SubscriptionVersion: 11,
+	})
+}
+
+func addAutopilotQuotaMember(t *testing.T, f *autopilotQuotaFixture, role string) pgtype.UUID {
+	t.Helper()
+	ctx := context.Background()
+	var userID pgtype.UUID
+	email := fmt.Sprintf("quota-notice-%s-%d@multica.test", role, time.Now().UnixNano())
+	if err := f.pool.QueryRow(ctx, `INSERT INTO "user" (name, email) VALUES ('Quota Notice Member', $1) RETURNING id`, email).Scan(&userID); err != nil {
+		t.Fatalf("insert quota notice user: %v", err)
+	}
+	if _, err := f.pool.Exec(ctx, `INSERT INTO member (workspace_id, user_id, role) VALUES ($1, $2, $3)`, f.workspaceID, userID, role); err != nil {
+		t.Fatalf("insert quota notice member: %v", err)
+	}
+	t.Cleanup(func() {
+		f.pool.Exec(context.Background(), `DELETE FROM member WHERE workspace_id = $1 AND user_id = $2`, f.workspaceID, userID)
+		f.pool.Exec(context.Background(), `DELETE FROM "user" WHERE id = $1`, userID)
+	})
+	return userID
 }
 
 func TestAutopilotQuotaDisabledDoesNotReadQuotaTables(t *testing.T) {
@@ -214,6 +246,167 @@ func TestAutopilotQuotaEnforcesBoundaryAndFinalizesIdempotently(t *testing.T) {
 	usage, err = svc.AutopilotQuotaUsage(ctx, workspaceID)
 	if err != nil || *usage.Used != 1 || *usage.Reserved != 0 {
 		t.Fatalf("final usage = %+v, %v; want one immutable consumed unit", usage, err)
+	}
+}
+
+func TestAutopilotQuotaThresholdNoticesReachEveryMemberOnce(t *testing.T) {
+	fixture := newAutopilotQuotaFixture(t, entitlement.ActionEnforce, 10)
+	fixture.setNotificationPolicy(10,
+		entitlement.NotificationThreshold{Key: "usage_50", Percent: 50, AtCount: 5},
+		entitlement.NotificationThreshold{Key: "usage_80", Percent: 80, AtCount: 8},
+		entitlement.NotificationThreshold{Key: "usage_90", Percent: 90, AtCount: 9},
+	)
+	addAutopilotQuotaMember(t, fixture, "admin")
+	addAutopilotQuotaMember(t, fixture, "member")
+	ctx := context.Background()
+
+	for i := 1; i <= 9; i++ {
+		if _, _, err := fixture.service.createAutopilotRunWithQuota(
+			ctx, fixture.workspaceID, "api", fmt.Sprintf("threshold-%d", i), fixture.createRunArgs,
+		); err != nil {
+			t.Fatalf("admission %d: %v", i, err)
+		}
+	}
+
+	var count int
+	if err := fixture.pool.QueryRow(ctx, `
+		SELECT count(*) FROM inbox_item
+		WHERE workspace_id = $1 AND type = 'autopilot_quota_warning'`, fixture.workspaceID).Scan(&count); err != nil {
+		t.Fatalf("count threshold inbox rows: %v", err)
+	}
+	if count != 9 {
+		t.Fatalf("threshold inbox rows = %d, want 3 thresholds x 3 members", count)
+	}
+
+	period, err := fixture.queries.GetAutopilotQuotaPeriod(ctx, db.GetAutopilotQuotaPeriodParams{
+		WorkspaceID: fixture.workspaceID,
+		PeriodStart: pgtype.Timestamptz{Time: fixture.periodStart, Valid: true},
+		PeriodEnd:   pgtype.Timestamptz{Time: fixture.periodEnd, Valid: true},
+	})
+	if err != nil {
+		t.Fatalf("load quota period: %v", err)
+	}
+	var notified map[string]bool
+	if err := json.Unmarshal(period.NotifiedThresholds, &notified); err != nil {
+		t.Fatalf("decode notified thresholds: %v", err)
+	}
+	for _, key := range []string{"usage_50", "usage_80", "usage_90"} {
+		if !notified[key] {
+			t.Fatalf("threshold %q was not persisted: %#v", key, notified)
+		}
+	}
+}
+
+func TestAutopilotQuotaRejectionNoticeAudiences(t *testing.T) {
+	fixture := newAutopilotQuotaFixture(t, entitlement.ActionEnforce, 1)
+	fixture.setNotificationPolicy(1)
+	adminID := addAutopilotQuotaMember(t, fixture, "admin")
+	actorID := addAutopilotQuotaMember(t, fixture, "member")
+	subscriberID := addAutopilotQuotaMember(t, fixture, "member")
+	uninvolvedID := addAutopilotQuotaMember(t, fixture, "member")
+	ctx := context.Background()
+	if err := fixture.queries.AddAutopilotSubscriber(ctx, db.AddAutopilotSubscriberParams{
+		AutopilotID: fixture.autopilotID, UserType: "member", UserID: subscriberID,
+	}); err != nil {
+		t.Fatalf("add autopilot subscriber: %v", err)
+	}
+	t.Cleanup(func() {
+		fixture.pool.Exec(context.Background(), `DELETE FROM autopilot_subscriber WHERE autopilot_id = $1`, fixture.autopilotID)
+	})
+
+	if _, _, err := fixture.service.createAutopilotRunWithQuota(
+		ctx, fixture.workspaceID, "api", "fill-quota", fixture.createRunArgs,
+	); err != nil {
+		t.Fatalf("fill quota: %v", err)
+	}
+	scheduleParams := fixture.createRunArgs
+	scheduleParams.Source = "schedule"
+	for _, key := range []string{"schedule-first-rejection", "schedule-second-rejection"} {
+		_, _, err := fixture.service.createAutopilotRunWithQuota(
+			ctx, fixture.workspaceID, "schedule", key, scheduleParams,
+		)
+		var quotaErr *AutopilotQuotaExceededError
+		if !errors.As(err, &quotaErr) {
+			t.Fatalf("schedule rejection %q = %v, want quota error", key, err)
+		}
+	}
+	manualParams := fixture.createRunArgs
+	manualParams.Source = "manual"
+	_, _, err := fixture.service.createAutopilotRunWithQuotaForActor(
+		ctx, fixture.workspaceID, "manual", "manual-rejection", actorID, manualParams,
+	)
+	var quotaErr *AutopilotQuotaExceededError
+	if !errors.As(err, &quotaErr) {
+		t.Fatalf("manual rejection = %v, want quota error", err)
+	}
+	apiParams := fixture.createRunArgs
+	apiParams.Source = "api"
+	_, _, err = fixture.service.createAutopilotRunWithQuota(
+		ctx, fixture.workspaceID, "api", "api-rejection", apiParams,
+	)
+	if !errors.As(err, &quotaErr) {
+		t.Fatalf("api rejection = %v, want quota error", err)
+	}
+
+	wantSchedule := map[string]int{
+		util.UUIDToString(fixture.publisherID): 2,
+		util.UUIDToString(adminID):             2,
+		util.UUIDToString(subscriberID):        2,
+		util.UUIDToString(actorID):             1,
+		util.UUIDToString(uninvolvedID):        1,
+	}
+	wantManual := map[string]int{
+		util.UUIDToString(fixture.publisherID): 1,
+		util.UUIDToString(adminID):             1,
+		util.UUIDToString(actorID):             1,
+		util.UUIDToString(subscriberID):        0,
+		util.UUIDToString(uninvolvedID):        0,
+	}
+	wantAPI := map[string]int{
+		util.UUIDToString(fixture.publisherID): 1,
+		util.UUIDToString(adminID):             1,
+		util.UUIDToString(actorID):             0,
+		util.UUIDToString(subscriberID):        1,
+		util.UUIDToString(uninvolvedID):        0,
+	}
+	for recipientID, want := range wantSchedule {
+		var got int
+		if err := fixture.pool.QueryRow(ctx, `
+			SELECT count(*) FROM inbox_item
+			WHERE workspace_id = $1 AND recipient_id = $2
+			  AND type = 'autopilot_quota_exceeded' AND details->>'source' = 'schedule'`,
+			fixture.workspaceID, recipientID).Scan(&got); err != nil {
+			t.Fatalf("count schedule notices for %s: %v", recipientID, err)
+		}
+		if got != want {
+			t.Errorf("schedule notices for %s = %d, want %d", recipientID, got, want)
+		}
+	}
+	for recipientID, want := range wantManual {
+		var got int
+		if err := fixture.pool.QueryRow(ctx, `
+			SELECT count(*) FROM inbox_item
+			WHERE workspace_id = $1 AND recipient_id = $2
+			  AND type = 'autopilot_quota_exceeded' AND details->>'source' = 'manual'`,
+			fixture.workspaceID, recipientID).Scan(&got); err != nil {
+			t.Fatalf("count manual notices for %s: %v", recipientID, err)
+		}
+		if got != want {
+			t.Errorf("manual notices for %s = %d, want %d", recipientID, got, want)
+		}
+	}
+	for recipientID, want := range wantAPI {
+		var got int
+		if err := fixture.pool.QueryRow(ctx, `
+			SELECT count(*) FROM inbox_item
+			WHERE workspace_id = $1 AND recipient_id = $2
+			  AND type = 'autopilot_quota_exceeded' AND details->>'source' = 'api'`,
+			fixture.workspaceID, recipientID).Scan(&got); err != nil {
+			t.Fatalf("count api notices for %s: %v", recipientID, err)
+		}
+		if got != want {
+			t.Errorf("api notices for %s = %d, want %d", recipientID, got, want)
+		}
 	}
 }
 

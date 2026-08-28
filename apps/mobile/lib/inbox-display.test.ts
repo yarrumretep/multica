@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { InboxItem } from "@multica/core/types";
-import { deduplicateInboxItems } from "./inbox-display";
+import { deduplicateInboxItems, getInboxDisplayTitle } from "./inbox-display";
 
 function item(overrides: Partial<InboxItem>): InboxItem {
   return {
@@ -50,5 +50,19 @@ describe("deduplicateInboxItems", () => {
         comment_id: "comment-1",
       },
     });
+  });
+});
+
+describe("getInboxDisplayTitle", () => {
+  it("uses the same stable quota title as web instead of backend fallback copy", () => {
+    expect(
+      getInboxDisplayTitle(
+        item({
+          issue_id: null,
+          type: "autopilot_quota_warning",
+          title: "Autopilot usage reached 80%",
+        }),
+      ),
+    ).toBe("Autopilot usage warning");
   });
 });

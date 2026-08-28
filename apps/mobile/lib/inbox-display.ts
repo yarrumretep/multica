@@ -35,6 +35,16 @@ export function stripQuickCreatePrefix(
 
 export function getInboxDisplayTitle(item: InboxItem): string {
   const details = item.details ?? {};
+  // Mobile is English-only today. Mirror web's localized system-notice titles
+  // rather than exposing backend fallback copy that can include raw counts.
+  switch (item.type) {
+    case "autopilot_paused":
+      return "Autopilot paused";
+    case "autopilot_quota_warning":
+      return "Autopilot usage warning";
+    case "autopilot_quota_exceeded":
+      return "Autopilot run limit reached";
+  }
   if (item.type === "quick_create_done") {
     const cleanedTitle = stripQuickCreatePrefix(item.title, details.identifier);
     if (cleanedTitle) return cleanedTitle;

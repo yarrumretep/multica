@@ -17,7 +17,7 @@ instead of deployment configuration.
 The client reads:
 
 - `schema_version`: only version 1 is accepted.
-- `policy_revision`: the policy protocol generation, currently fixed at `1` by
+- `policy_revision`: the policy protocol generation, currently fixed at `2` by
   Cloud and not deployment configuration.
 - `subscription_version`: the workspace's monotonic subscription revision. A
   response that moves this revision backwards cannot replace a cached policy
@@ -32,6 +32,10 @@ The client reads:
 - `gates`: effective `off` or `enforce` instructions and parameters. Cloud does
   not expose an `observe` rollout mode; `observe` exists only as Multica's local
   downgrade of an expired cached `enforce` instruction.
+- `gates.*.notifications`: an optional, additive delivery policy. The autopilot
+  quota consumer recognizes ordered count thresholds and `every_attempt`
+  rejection delivery. A malformed notification policy is ignored without
+  invalidating an otherwise valid enforcement gate.
 
 Responses tolerate unknown JSON fields for additive compatibility. Unknown
 schema/action, malformed fields, missing gates, HTTP failures, and timeouts fail
@@ -76,6 +80,15 @@ The client itself has no background goroutine and introduces no startup
 dependency; the autopilot consumer owns its policy-neutral accounting and
 recovery lifecycle separately. Cloud remains the only place that determines
 the effective policy from subscription facts and authoritative limits.
+
+For an enforcing autopilot policy, each Cloud-provided threshold is persisted
+once on the workspace quota-period row and delivered to all current workspace
+members. The first rejected run in a period is also delivered to all members.
+Later rejections are delivered on every attempt to the members most able to act:
+owner/admin plus the triggering member for manual/API runs, or owner/admin plus
+the autopilot creator/subscribers for schedule/webhook runs and calls without a
+resolvable member actor. These notifications are issue-less Inbox items and are
+published only after their database transaction commits.
 
 Future consumers should depend on the small `Provider` interface. Tests can use
 `server/internal/entitlement/entitlementtest.Stub` without Cloud.

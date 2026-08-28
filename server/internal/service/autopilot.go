@@ -533,7 +533,7 @@ func (s *AutopilotService) dispatchAutopilot(
 		initialStatus = "running"
 	}
 
-	run, reused, err := s.createAutopilotRunWithQuota(ctx, autopilot.WorkspaceID, source, idempotencyKey, db.CreateAutopilotRunParams{
+	run, reused, err := s.createAutopilotRunWithQuotaForActor(ctx, autopilot.WorkspaceID, source, idempotencyKey, actorUserID, db.CreateAutopilotRunParams{
 		ID:                dbid.NewV7(),
 		AutopilotID:       autopilot.ID,
 		TriggerID:         triggerID,

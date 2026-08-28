@@ -48,6 +48,11 @@
     "original_input": "원본 입력",
     "retry_with_context": "컨텍스트를 유지하여 재시도",
     "edit_advanced": "고급 양식으로 수정",
+    "autopilot_quota_warning_body": "현재 기간의 자동화 실행 한도 {{limit}}회 중 {{total}}회가 사용되었거나 실행 중입니다({{percent}}%). 한도는 {{resetAt}}에 초기화됩니다.",
+    "autopilot_quota_exceeded_body": "현재 기간의 자동화 실행 한도 {{limit}}회에 도달하여 이번 실행은 시작되지 않았습니다. 한도는 {{resetAt}}에 초기화됩니다.",
+    "autopilot_quota_exceeded_autopilot_body": "자동화 ‘{{autopilot}}’은 현재 기간의 실행 한도 {{limit}}회에 도달하여 시작되지 않았습니다. 한도는 {{resetAt}}에 초기화됩니다.",
+    "autopilot_quota_upgrade": "업그레이드 옵션 보기",
+    "autopilot_quota_contact_admin": "플랜을 업그레이드하려면 워크스페이스 owner 또는 admin에게 문의하세요.",
     "archive": "보관",
     "unarchive": "보관 해제"
   },
@@ -70,7 +75,10 @@
     "reaction_added": "반응 추가됨",
     "quick_create_done": "에이전트로 생성됨",
     "quick_create_failed": "에이전트 생성 실패",
-    "quick_create_unconfirmed": "에이전트 생성 결과 미확인"
+    "quick_create_unconfirmed": "에이전트 생성 결과 미확인",
+    "autopilot_paused": "자동화 일시 중지됨",
+    "autopilot_quota_warning": "자동화 사용량 알림",
+    "autopilot_quota_exceeded": "자동화 실행 한도 도달"
   },
   "labels": {
     "set_status_to": "상태 변경:",
@@ -83,7 +91,9 @@
     "removed_due_date": "마감일 제거됨",
     "reacted_to_comment": "내 댓글에 {{emoji}} 반응을 남겼습니다",
     "created_with_agent": "에이전트가 생성: {{identifier}}",
-    "failed_with_detail": "실패: {{detail}}"
+    "failed_with_detail": "실패: {{detail}}",
+    "autopilot_quota_usage": "자동화 실행 한도 {{percent}}% 사용",
+    "autopilot_quota_blocked": "한도에 도달하여 실행이 차단됨"
   },
   "toasts": {
     "source_context_retry_started": "원본 컨텍스트로 재시도를 시작했습니다",

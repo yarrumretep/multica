@@ -190,6 +190,9 @@ vi.mock("./inbox-context-menu", () => ({
   },
 }));
 vi.mock("./inbox-detail-label", () => ({ useTypeLabels: () => ({}) }));
+vi.mock("./autopilot-quota-notice", () => ({
+  AutopilotQuotaNotice: () => null,
+}));
 vi.mock("../../i18n", () => ({ useT: () => ({ t: () => "Inbox" }) }));
 
 function item(overrides: Partial<InboxItem> = {}): InboxItem {

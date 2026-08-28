@@ -48,6 +48,11 @@
     "original_input": "元の入力",
     "retry_with_context": "コンテキストを保持して再試行",
     "edit_advanced": "詳細フォームで編集",
+    "autopilot_quota_warning_body": "現在の期間では、{{limit}} 回の自動化実行枠のうち {{total}} 回が使用中または実行中です（{{percent}}%）。実行枠は {{resetAt}} にリセットされます。",
+    "autopilot_quota_exceeded_body": "現在の期間の自動化実行上限 {{limit}} 回に達したため、この実行は開始されませんでした。実行枠は {{resetAt}} にリセットされます。",
+    "autopilot_quota_exceeded_autopilot_body": "自動化「{{autopilot}}」は、現在の期間の実行上限 {{limit}} 回に達したため開始されませんでした。実行枠は {{resetAt}} にリセットされます。",
+    "autopilot_quota_upgrade": "アップグレード方法を見る",
+    "autopilot_quota_contact_admin": "プランをアップグレードするには、ワークスペースの owner または admin に連絡してください。",
     "archive": "アーカイブ",
     "unarchive": "アーカイブ解除"
   },
@@ -70,7 +75,10 @@
     "reaction_added": "リアクションあり",
     "quick_create_done": "エージェントで作成",
     "quick_create_failed": "エージェントでの作成に失敗",
-    "quick_create_unconfirmed": "エージェントでの作成結果は未確認"
+    "quick_create_unconfirmed": "エージェントでの作成結果は未確認",
+    "autopilot_paused": "自動化を一時停止しました",
+    "autopilot_quota_warning": "自動化の使用量に関するお知らせ",
+    "autopilot_quota_exceeded": "自動化の実行上限に達しました"
   },
   "labels": {
     "set_status_to": "ステータスを変更:",
@@ -83,7 +91,9 @@
     "removed_due_date": "期限を削除",
     "reacted_to_comment": "あなたのコメントに {{emoji}} のリアクションをしました",
     "created_with_agent": "エージェントで作成: {{identifier}}",
-    "failed_with_detail": "失敗: {{detail}}"
+    "failed_with_detail": "失敗: {{detail}}",
+    "autopilot_quota_usage": "自動化の実行枠を {{percent}}% 使用しました",
+    "autopilot_quota_blocked": "上限に達したため実行をブロックしました"
   },
   "toasts": {
     "source_context_retry_started": "元のコンテキストで再試行を開始しました",
