@@ -28,7 +28,6 @@ export type InboxItemType =
   // System notifications are intentionally issue-less. Keep them in the
   // same Inbox model so read/archive/realtime behavior remains consistent.
   | "autopilot_paused"
-  | "autopilot_quota_warning"
   | "autopilot_quota_exceeded";
 
 /**

@@ -108,12 +108,14 @@ func TestGateCachesByWorkspaceAndClonesResults(t *testing.T) {
 	if autopilot.Gate.Action != ActionEnforce || calls.Load() != 1 {
 		t.Fatalf("autopilot = %+v, calls = %d", autopilot, calls.Load())
 	}
-	if autopilot.Gate.Notifications == nil || len(autopilot.Gate.Notifications.Thresholds) != 3 {
+	if autopilot.Gate.Notifications == nil ||
+		autopilot.Gate.Notifications.OnRejection != NotificationFirstRejectionPerPeriod {
 		t.Fatalf("autopilot notifications = %+v", autopilot.Gate.Notifications)
 	}
-	autopilot.Gate.Notifications.Thresholds[0].AtCount = 999
+	autopilot.Gate.Notifications.OnRejection = "mutated"
 	cloned := client.Gate(context.Background(), workspaceID, GateAutopilotRuns)
-	if cloned.Gate.Notifications == nil || cloned.Gate.Notifications.Thresholds[0].AtCount != 12 {
+	if cloned.Gate.Notifications == nil ||
+		cloned.Gate.Notifications.OnRejection != NotificationFirstRejectionPerPeriod {
 		t.Fatalf("cloned notifications = %+v", cloned.Gate.Notifications)
 	}
 }
@@ -129,50 +131,23 @@ func TestNotificationPolicyDoesNotControlQuotaValidity(t *testing.T) {
 
 	valid := base
 	valid.Notifications = &wireNotificationPolicy{
-		OnRejection:                          NotificationEveryAttempt,
-		AutomatedRejectionMinIntervalSeconds: 86400,
-		Thresholds: []wireNotificationThreshold{
-			{Key: "usage_50", Percent: 50, AtCount: 50},
-			{Key: "usage_80", Percent: 80, AtCount: 80},
-			{Key: "usage_90", Percent: 90, AtCount: 90},
-		},
+		OnRejection: NotificationFirstRejectionPerPeriod,
 	}
 	gate, err := normalizeGate(GateAutopilotRuns, valid)
-	if err != nil || gate.Notifications == nil || len(gate.Notifications.Thresholds) != 3 {
+	if err != nil || gate.Notifications == nil ||
+		gate.Notifications.OnRejection != NotificationFirstRejectionPerPeriod {
 		t.Fatalf("valid notification gate = %+v, err = %v", gate, err)
 	}
 
 	malformed := base
 	malformed.Notifications = &wireNotificationPolicy{
-		OnRejection:                          "future_mode",
-		AutomatedRejectionMinIntervalSeconds: 86400,
-		Thresholds:                           []wireNotificationThreshold{{Key: "usage_50", Percent: 50, AtCount: 50}},
+		OnRejection: "future_mode",
 	}
 	gate, err = normalizeGate(GateAutopilotRuns, malformed)
 	if err != nil || gate.Action != ActionEnforce || gate.Notifications != nil {
 		t.Fatalf("malformed notification gate = %+v, err = %v; want enforced quota without notices", gate, err)
 	}
 
-	missingThrottle := base
-	missingThrottle.Notifications = &wireNotificationPolicy{
-		OnRejection: NotificationEveryAttempt,
-		Thresholds:  []wireNotificationThreshold{{Key: "usage_50", Percent: 50, AtCount: 50}},
-	}
-	gate, err = normalizeGate(GateAutopilotRuns, missingThrottle)
-	if err != nil || gate.Action != ActionEnforce || gate.Notifications != nil {
-		t.Fatalf("notification policy without automated throttle = %+v, err = %v; want enforced quota without notices", gate, err)
-	}
-
-	rejectionOnly := base
-	rejectionOnly.Notifications = &wireNotificationPolicy{
-		OnRejection:                          NotificationEveryAttempt,
-		AutomatedRejectionMinIntervalSeconds: 86400,
-		Thresholds:                           []wireNotificationThreshold{},
-	}
-	gate, err = normalizeGate(GateAutopilotRuns, rejectionOnly)
-	if err != nil || gate.Notifications == nil || len(gate.Notifications.Thresholds) != 0 {
-		t.Fatalf("rejection-only notification gate = %+v, err = %v", gate, err)
-	}
 }
 
 func TestConcurrentWorkspaceMissesUseSingleflight(t *testing.T) {
@@ -652,13 +627,7 @@ func samplePolicy(policyRevision, subscriptionVersion, validForSeconds int64, is
 				Action: string(ActionEnforce), Limit: &autopilotLimit,
 				PeriodStart: &periodStart, PeriodEnd: &periodEnd, ResetAt: &periodEnd,
 				Notifications: &wireNotificationPolicy{
-					OnRejection:                          NotificationEveryAttempt,
-					AutomatedRejectionMinIntervalSeconds: 86400,
-					Thresholds: []wireNotificationThreshold{
-						{Key: "usage_50", Percent: 50, AtCount: 12},
-						{Key: "usage_80", Percent: 80, AtCount: 19},
-						{Key: "usage_90", Percent: 90, AtCount: 21},
-					},
+					OnRejection: NotificationFirstRejectionPerPeriod,
 				},
 			},
 		},

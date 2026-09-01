@@ -45,18 +45,16 @@ function item(overrides: Partial<InboxItem> = {}): InboxItem {
     recipient_id: "member-1",
     actor_type: "system",
     actor_id: null,
-    type: "autopilot_quota_warning",
+    type: "autopilot_quota_exceeded",
     severity: "attention",
     issue_id: null,
-    title: "Autopilot usage reached 80%",
+    title: "Autopilot run limit reached",
     body: "Fallback body",
     issue_status: null,
     read: false,
     archived: false,
     created_at: "2026-08-28T08:00:00Z",
     details: {
-      threshold_percent: "80",
-      total: "80",
       limit: "100",
       reset_at: "2026-09-01T00:00:00Z",
     },
@@ -65,13 +63,13 @@ function item(overrides: Partial<InboxItem> = {}): InboxItem {
 }
 
 describe("AutopilotQuotaNotice", () => {
-  it("shows managers the localized usage facts and billing action", () => {
+  it("shows managers the localized rejection facts and billing action", () => {
     state.role = "owner";
     state.push.mockClear();
 
     render(<AutopilotQuotaNotice item={item()} />);
 
-    expect(screen.getByText(/80 of 100 autopilot runs/)).toBeInTheDocument();
+    expect(screen.getByText(/limit of 100 autopilot runs/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "View upgrade options" }));
     expect(state.push).toHaveBeenCalledWith("/acme/settings?tab=billing");
   });
@@ -82,7 +80,6 @@ describe("AutopilotQuotaNotice", () => {
     render(
       <AutopilotQuotaNotice
         item={item({
-          type: "autopilot_quota_exceeded",
           details: {
             limit: "100",
             reset_at: "2026-09-01T00:00:00Z",

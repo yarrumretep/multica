@@ -36,7 +36,6 @@ export function useTypeLabels(): Record<InboxItemType, string> {
     quick_create_failed: t(($) => $.types.quick_create_failed),
     quick_create_unconfirmed: t(($) => $.types.quick_create_unconfirmed),
     autopilot_paused: t(($) => $.types.autopilot_paused),
-    autopilot_quota_warning: t(($) => $.types.autopilot_quota_warning),
     autopilot_quota_exceeded: t(($) => $.types.autopilot_quota_exceeded),
   };
 }
@@ -132,18 +131,6 @@ export function InboxDetailLabel({ item }: { item: InboxItem }) {
       // so the detail is shown as-is with no "Failed:" framing.
       const detail = getQuickCreateOutcomeDetail(item);
       if (detail) return <span>{detail}</span>;
-      return <span>{typeLabels[item.type]}</span>;
-    }
-    case "autopilot_quota_warning": {
-      if (details.threshold_percent) {
-        return (
-          <span>
-            {t(($) => $.labels.autopilot_quota_usage, {
-              percent: details.threshold_percent,
-            })}
-          </span>
-        );
-      }
       return <span>{typeLabels[item.type]}</span>;
     }
     case "autopilot_quota_exceeded":

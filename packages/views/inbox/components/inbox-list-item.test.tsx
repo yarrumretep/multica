@@ -74,7 +74,6 @@ vi.mock("./inbox-detail-label", () => ({
   InboxDetailLabel: () => null,
   useTypeLabels: () => ({
     autopilot_paused: "Autopilot paused",
-    autopilot_quota_warning: "Autopilot usage warning",
     autopilot_quota_exceeded: "Autopilot run limit reached",
   }),
 }));

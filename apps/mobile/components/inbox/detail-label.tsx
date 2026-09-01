@@ -55,7 +55,6 @@ const TYPE_LABEL: Record<InboxItemType, string> = {
   quick_create_failed: "Quick-create failed",
   quick_create_unconfirmed: "Quick-create needs a check",
   autopilot_paused: "Autopilot paused",
-  autopilot_quota_warning: "Autopilot usage warning",
   autopilot_quota_exceeded: "Autopilot run limit reached",
 };
 
@@ -153,10 +152,6 @@ export function InboxDetailLabel({
         const detail = singleLine(details.error) || singleLine(item.body);
         return detail || TYPE_LABEL[item.type];
       }
-      case "autopilot_quota_warning":
-        return details.threshold_percent
-          ? `${details.threshold_percent}% of autopilot runs used`
-          : TYPE_LABEL[item.type];
       case "autopilot_quota_exceeded":
         return "Run blocked because the limit was reached";
       default:

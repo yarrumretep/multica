@@ -24,17 +24,9 @@ export function AutopilotQuotaNotice({ item }: { item: InboxItem }) {
   const wsPaths = useWorkspacePaths();
   const details = item.details ?? {};
   const resetAt = formatResetAt(details.reset_at);
-  const hasUsageFacts = Boolean(details.total && details.limit && resetAt);
 
   let body = item.body;
-  if (item.type === "autopilot_quota_warning" && hasUsageFacts) {
-    body = t(($) => $.detail.autopilot_quota_warning_body, {
-      total: details.total,
-      limit: details.limit,
-      percent: details.threshold_percent,
-      resetAt,
-    });
-  } else if (item.type === "autopilot_quota_exceeded" && details.limit && resetAt) {
+  if (details.limit && resetAt) {
     body = details.autopilot_title
       ? t(($) => $.detail.autopilot_quota_exceeded_autopilot_body, {
           autopilot: details.autopilot_title,

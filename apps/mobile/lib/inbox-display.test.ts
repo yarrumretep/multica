@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { InboxItem } from "@multica/core/types";
-import { deduplicateInboxItems, getInboxDisplayTitle } from "./inbox-display";
+import {
+  deduplicateInboxItems,
+  getInboxDisplayTitle,
+  getInboxNavigationTarget,
+} from "./inbox-display";
 
 function item(overrides: Partial<InboxItem>): InboxItem {
   return {
@@ -59,11 +63,11 @@ describe("getInboxDisplayTitle", () => {
       getInboxDisplayTitle(
         item({
           issue_id: null,
-          type: "autopilot_quota_warning",
-          title: "Autopilot usage reached 80%",
+          type: "autopilot_quota_exceeded",
+          title: "Autopilot quota exceeded (100/100)",
         }),
       ),
-    ).toBe("Autopilot usage warning");
+    ).toBe("Autopilot run limit reached");
   });
 
   it("keeps paused autopilot copy on the server fallback path", () => {
@@ -76,5 +80,36 @@ describe("getInboxDisplayTitle", () => {
         }),
       ),
     ).toBe("Paused after repeated failures");
+  });
+});
+
+describe("getInboxNavigationTarget", () => {
+  it("opens issue-less quota notices in their workspace sheet", () => {
+    expect(
+      getInboxNavigationTarget(
+        item({ issue_id: null, type: "autopilot_quota_exceeded" }),
+        "acme",
+        "history-1",
+      ),
+    ).toEqual({
+      pathname: "/[workspace]/inbox/[id]",
+      params: { workspace: "acme", id: "inbox-1" },
+    });
+  });
+
+  it("preserves issue navigation and ignores other issue-less notices", () => {
+    expect(
+      getInboxNavigationTarget(item({}), "acme", "history-1"),
+    ).toMatchObject({
+      pathname: "/[workspace]/issue/[id]",
+      params: { workspace: "acme", id: "issue-1", h: "history-1" },
+    });
+    expect(
+      getInboxNavigationTarget(
+        item({ issue_id: null, type: "autopilot_paused" }),
+        "acme",
+        "history-1",
+      ),
+    ).toBeNull();
   });
 });

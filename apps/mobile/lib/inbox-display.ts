@@ -38,8 +38,6 @@ export function getInboxDisplayTitle(item: InboxItem): string {
   // Mobile is English-only today. Mirror web's localized system-notice titles
   // rather than exposing backend fallback copy that can include raw counts.
   switch (item.type) {
-    case "autopilot_quota_warning":
-      return "Autopilot usage warning";
     case "autopilot_quota_exceeded":
       return "Autopilot run limit reached";
   }
@@ -57,6 +55,32 @@ export function getInboxDisplayTitle(item: InboxItem): string {
     if (prompt) return prompt;
   }
   return item.title;
+}
+
+export function getInboxNavigationTarget(
+  item: InboxItem,
+  workspace: string | null,
+  historyToken: string,
+) {
+  if (!workspace) return null;
+  if (item.issue_id) {
+    return {
+      pathname: "/[workspace]/issue/[id]" as const,
+      params: {
+        workspace,
+        id: item.issue_id,
+        highlight: item.details?.comment_id,
+        h: historyToken,
+      },
+    };
+  }
+  if (item.type === "autopilot_quota_exceeded") {
+    return {
+      pathname: "/[workspace]/inbox/[id]" as const,
+      params: { workspace, id: item.id },
+    };
+  }
+  return null;
 }
 
 /**

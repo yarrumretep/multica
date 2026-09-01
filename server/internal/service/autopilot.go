@@ -34,13 +34,12 @@ type TxStarter interface {
 }
 
 type AutopilotService struct {
-	Queries        *db.Queries
-	TxStarter      TxStarter
-	Bus            *events.Bus
-	TaskSvc        *TaskService
-	Entitlements   entitlement.Provider
-	QuotaMetrics   AutopilotQuotaMetrics
-	quotaNoticeNow func() time.Time
+	Queries      *db.Queries
+	TxStarter    TxStarter
+	Bus          *events.Bus
+	TaskSvc      *TaskService
+	Entitlements entitlement.Provider
+	QuotaMetrics AutopilotQuotaMetrics
 }
 
 // DefaultAutopilotTriggerTimezone is the timezone used to render Autopilot
@@ -534,7 +533,7 @@ func (s *AutopilotService) dispatchAutopilot(
 		initialStatus = "running"
 	}
 
-	run, reused, err := s.createAutopilotRunWithQuotaForActor(ctx, autopilot.WorkspaceID, source, idempotencyKey, actorUserID, db.CreateAutopilotRunParams{
+	run, reused, err := s.createAutopilotRunWithQuota(ctx, autopilot.WorkspaceID, source, idempotencyKey, db.CreateAutopilotRunParams{
 		ID:                dbid.NewV7(),
 		AutopilotID:       autopilot.ID,
 		TriggerID:         triggerID,

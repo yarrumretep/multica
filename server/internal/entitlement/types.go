@@ -32,7 +32,7 @@ const (
 	ActionObserve Action = "observe"
 	ActionEnforce Action = "enforce"
 
-	NotificationEveryAttempt = "every_attempt"
+	NotificationFirstRejectionPerPeriod = "first_rejection_per_period"
 )
 
 type Reason string
@@ -62,15 +62,7 @@ type Gate struct {
 }
 
 type NotificationPolicy struct {
-	Thresholds                    []NotificationThreshold
-	OnRejection                   string
-	AutomatedRejectionMinInterval time.Duration
-}
-
-type NotificationThreshold struct {
-	Key     string
-	Percent int
-	AtCount int
+	OnRejection string
 }
 
 // Decision carries enough source information for consumers to audit why a gate
@@ -129,9 +121,7 @@ func cloneGate(in Gate) Gate {
 	}
 	if in.Notifications != nil {
 		out.Notifications = &NotificationPolicy{
-			OnRejection:                   in.Notifications.OnRejection,
-			AutomatedRejectionMinInterval: in.Notifications.AutomatedRejectionMinInterval,
-			Thresholds:                    append([]NotificationThreshold(nil), in.Notifications.Thresholds...),
+			OnRejection: in.Notifications.OnRejection,
 		}
 	}
 	return out
