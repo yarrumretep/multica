@@ -8,6 +8,27 @@
  */
 import type { InboxItem } from "@multica/core/types";
 
+function formatResetAt(value: string | undefined): string {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(date);
+}
+
+export function getAutopilotQuotaBody(item: InboxItem): string | null {
+  if (item.type !== "autopilot_quota_exceeded") return item.body;
+  const details = item.details ?? {};
+  const resetAt = formatResetAt(details.reset_at);
+  if (!details.limit || !resetAt) return item.body;
+  if (details.autopilot_title) {
+    return `Autopilot “${details.autopilot_title}” was not started because this workspace has reached its limit of ${details.limit} runs for the current period. The allowance resets ${resetAt}.`;
+  }
+  return `This workspace has reached its limit of ${details.limit} autopilot runs for the current period. This execution was not started. The allowance resets ${resetAt}.`;
+}
+
 function singleLine(value: string | null | undefined): string {
   return (value ?? "").replace(/\s+/g, " ").trim();
 }
@@ -74,7 +95,10 @@ export function getInboxNavigationTarget(
       },
     };
   }
-  if (item.type === "autopilot_quota_exceeded") {
+  if (
+    item.type === "autopilot_quota_exceeded" ||
+    item.type === "autopilot_paused"
+  ) {
     return {
       pathname: "/[workspace]/inbox/[id]" as const,
       params: { workspace, id: item.id },

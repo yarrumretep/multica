@@ -1,11 +1,8 @@
 "use client";
 
-import { useCurrentMember } from "@multica/core/permissions";
-import { useWorkspacePaths } from "@multica/core/paths";
 import type { InboxItem } from "@multica/core/types";
 import { Button } from "@multica/ui/components/ui/button";
 import { useT } from "../../i18n";
-import { useNavigation } from "../../navigation";
 
 function formatResetAt(value: string | undefined): string {
   if (!value) return "";
@@ -17,11 +14,14 @@ function formatResetAt(value: string | undefined): string {
   }).format(date);
 }
 
-export function AutopilotQuotaNotice({ item }: { item: InboxItem }) {
+export function AutopilotQuotaNotice({
+  item,
+  onOpenRecovery,
+}: {
+  item: InboxItem;
+  onOpenRecovery: () => void;
+}) {
   const { t } = useT("inbox");
-  const { role, isLoading } = useCurrentMember(item.workspace_id);
-  const navigation = useNavigation();
-  const wsPaths = useWorkspacePaths();
   const details = item.details ?? {};
   const resetAt = formatResetAt(details.reset_at);
 
@@ -39,8 +39,6 @@ export function AutopilotQuotaNotice({ item }: { item: InboxItem }) {
         });
   }
 
-  const canManageBilling = role === "owner" || role === "admin";
-
   return (
     <>
       {body && (
@@ -48,20 +46,9 @@ export function AutopilotQuotaNotice({ item }: { item: InboxItem }) {
           {body}
         </div>
       )}
-      {!isLoading &&
-        (canManageBilling ? (
-          <Button
-            className="mt-4"
-            size="sm"
-            onClick={() => navigation.push(`${wsPaths.settings()}?tab=billing`)}
-          >
-            {t(($) => $.detail.autopilot_quota_upgrade)}
-          </Button>
-        ) : (
-          <p className="mt-4 text-body text-muted-foreground">
-            {t(($) => $.detail.autopilot_quota_contact_admin)}
-          </p>
-        ))}
+      <Button className="mt-4" size="sm" onClick={onOpenRecovery}>
+        {t(($) => $.detail.autopilot_quota_upgrade)}
+      </Button>
     </>
   );
 }

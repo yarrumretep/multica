@@ -1,28 +1,8 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import type { InboxItem, MemberRole } from "@multica/core/types";
+import type { InboxItem } from "@multica/core/types";
 import en from "../../locales/en/inbox.json";
 import { AutopilotQuotaNotice } from "./autopilot-quota-notice";
-
-const state = vi.hoisted(() => ({
-  role: "member" as MemberRole,
-  push: vi.fn(),
-}));
-
-vi.mock("@multica/core/permissions", () => ({
-  useCurrentMember: () => ({
-    role: state.role,
-    isLoading: false,
-  }),
-}));
-
-vi.mock("@multica/core/paths", () => ({
-  useWorkspacePaths: () => ({ settings: () => "/acme/settings" }),
-}));
-
-vi.mock("../../navigation", () => ({
-  useNavigation: () => ({ push: state.push }),
-}));
 
 vi.mock("../../i18n", () => ({
   useT: () => ({
@@ -63,20 +43,22 @@ function item(overrides: Partial<InboxItem> = {}): InboxItem {
 }
 
 describe("AutopilotQuotaNotice", () => {
-  it("shows managers the localized rejection facts and billing action", () => {
-    state.role = "owner";
-    state.push.mockClear();
+  it("shows localized rejection facts and opens the shared recovery surface", () => {
+    const onOpenRecovery = vi.fn();
 
-    render(<AutopilotQuotaNotice item={item()} />);
+    render(
+      <AutopilotQuotaNotice
+        item={item()}
+        onOpenRecovery={onOpenRecovery}
+      />,
+    );
 
     expect(screen.getByText(/limit of 100 autopilot runs/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "View upgrade options" }));
-    expect(state.push).toHaveBeenCalledWith("/acme/settings?tab=billing");
+    expect(onOpenRecovery).toHaveBeenCalledOnce();
   });
 
-  it("asks regular members to contact a workspace manager", () => {
-    state.role = "member";
-
+  it("uses the autopilot title without inferring billing access locally", () => {
     render(
       <AutopilotQuotaNotice
         item={item({
@@ -86,13 +68,11 @@ describe("AutopilotQuotaNotice", () => {
             autopilot_title: "Daily triage",
           },
         })}
+        onOpenRecovery={vi.fn()}
       />,
     );
 
     expect(screen.getByText(/Daily triage/)).toBeInTheDocument();
-    expect(
-      screen.getByText("Contact a workspace owner or admin to upgrade the plan."),
-    ).toBeInTheDocument();
-    expect(screen.queryByRole("button")).toBeNull();
+    expect(screen.getByRole("button", { name: "View upgrade options" })).toBeInTheDocument();
   });
 });

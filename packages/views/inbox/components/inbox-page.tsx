@@ -102,7 +102,9 @@ import { useIssueLimitUpgradePrompt } from "../../modals/use-issue-limit-upgrade
 
 export function InboxPage() {
   const { t } = useT("inbox");
-  const showIssueLimitUpgradePrompt = useIssueLimitUpgradePrompt();
+  const showIssueLimitUpgradePrompt = useIssueLimitUpgradePrompt(
+    "autopilot_quota",
+  );
   const { searchParams, replace } = useNavigation();
   const urlIssue = searchParams.get("issue") ?? "";
   const urlView: InboxView =
@@ -719,7 +721,10 @@ export function InboxPage() {
         {typeLabels[detailItem.type]} · {timeAgo(detailItem.created_at)}
       </p>
       {isAutopilotQuotaNotice(detailItem.type) ? (
-        <AutopilotQuotaNotice item={detailItem} />
+        <AutopilotQuotaNotice
+          item={detailItem}
+          onOpenRecovery={showIssueLimitUpgradePrompt}
+        />
       ) : detailItem.body ? (
         <div className="mt-4 whitespace-pre-wrap text-body leading-relaxed text-foreground">
           {detailItem.body}

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { InboxItem } from "@multica/core/types";
 import {
   deduplicateInboxItems,
+  getAutopilotQuotaBody,
   getInboxDisplayTitle,
   getInboxNavigationTarget,
 } from "./inbox-display";
@@ -97,7 +98,7 @@ describe("getInboxNavigationTarget", () => {
     });
   });
 
-  it("preserves issue navigation and ignores other issue-less notices", () => {
+  it("preserves issue navigation and opens paused notices in the same sheet", () => {
     expect(
       getInboxNavigationTarget(item({}), "acme", "history-1"),
     ).toMatchObject({
@@ -110,6 +111,43 @@ describe("getInboxNavigationTarget", () => {
         "acme",
         "history-1",
       ),
-    ).toBeNull();
+    ).toEqual({
+      pathname: "/[workspace]/inbox/[id]",
+      params: { workspace: "acme", id: "inbox-1" },
+    });
+  });
+});
+
+describe("getAutopilotQuotaBody", () => {
+  it("formats the machine reset timestamp for the device locale", () => {
+    const body = getAutopilotQuotaBody(
+      item({
+        issue_id: null,
+        type: "autopilot_quota_exceeded",
+        body: "Raw fallback 2026-09-01T00:00:00Z",
+        details: {
+          limit: "100",
+          reset_at: "2026-09-01T00:00:00Z",
+          autopilot_title: "Daily triage",
+        },
+      }),
+    );
+
+    expect(body).toContain("Daily triage");
+    expect(body).toContain("limit of 100 runs");
+    expect(body).not.toContain("2026-09-01T00:00:00Z");
+  });
+
+  it("keeps the server fallback when structured facts are incomplete", () => {
+    expect(
+      getAutopilotQuotaBody(
+        item({
+          issue_id: null,
+          type: "autopilot_quota_exceeded",
+          body: "Readable server fallback",
+          details: { limit: "100" },
+        }),
+      ),
+    ).toBe("Readable server fallback");
   });
 });

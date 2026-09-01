@@ -249,7 +249,7 @@ func TestAutopilotQuotaEnforcesBoundaryAndFinalizesIdempotently(t *testing.T) {
 	}
 }
 
-func TestAutopilotQuotaFirstRejectionNotifiesEveryMemberOnce(t *testing.T) {
+func TestAutopilotQuotaFirstRejectionNotifiesResponsibleMemberOnce(t *testing.T) {
 	const attempts = 10
 	fixture := newAutopilotQuotaFixture(t, entitlement.ActionEnforce, 2)
 	fixture.setNotificationPolicy(2)
@@ -291,13 +291,7 @@ func TestAutopilotQuotaFirstRejectionNotifiesEveryMemberOnce(t *testing.T) {
 		t.Error(err)
 	}
 
-	var memberCount, noticeCount int
-	if err := fixture.pool.QueryRow(ctx,
-		`SELECT count(*) FROM member WHERE workspace_id = $1`,
-		fixture.workspaceID,
-	).Scan(&memberCount); err != nil {
-		t.Fatalf("count workspace members: %v", err)
-	}
+	var noticeCount int
 	if err := fixture.pool.QueryRow(ctx,
 		`SELECT count(*) FROM inbox_item
 		 WHERE workspace_id = $1 AND type = 'autopilot_quota_exceeded'`,
@@ -305,8 +299,8 @@ func TestAutopilotQuotaFirstRejectionNotifiesEveryMemberOnce(t *testing.T) {
 	).Scan(&noticeCount); err != nil {
 		t.Fatalf("count quota rejection notices: %v", err)
 	}
-	if noticeCount != memberCount {
-		t.Fatalf("quota rejection notices = %d, want one for each of %d members", noticeCount, memberCount)
+	if noticeCount != 1 {
+		t.Fatalf("quota rejection notices = %d, want one for the responsible member", noticeCount)
 	}
 
 	period, err := fixture.queries.GetAutopilotQuotaPeriod(ctx, db.GetAutopilotQuotaPeriodParams{
@@ -321,18 +315,29 @@ func TestAutopilotQuotaFirstRejectionNotifiesEveryMemberOnce(t *testing.T) {
 		t.Fatal("first rejection notification marker was not persisted")
 	}
 
-	var title, noticeKey string
+	var title, noticeKey, recipientID, severity, body string
 	var hasThresholdPercent bool
 	if err := fixture.pool.QueryRow(ctx, `
-		SELECT details->>'autopilot_title', details->>'notice_key', details ? 'threshold_percent'
+		SELECT details->>'autopilot_title', details->>'notice_key',
+		       details ? 'threshold_percent', recipient_id::text, severity, body
 		FROM inbox_item
 		WHERE workspace_id = $1 AND type = 'autopilot_quota_exceeded'
 		LIMIT 1`, fixture.workspaceID,
-	).Scan(&title, &noticeKey, &hasThresholdPercent); err != nil {
+	).Scan(&title, &noticeKey, &hasThresholdPercent, &recipientID, &severity, &body); err != nil {
 		t.Fatalf("load first rejection details: %v", err)
 	}
 	if title == "" || noticeKey != autopilotQuotaFirstRejectionNoticeKey || hasThresholdPercent {
 		t.Fatalf("first rejection details = title %q, key %q, threshold field %v", title, noticeKey, hasThresholdPercent)
+	}
+	if recipientID != util.UUIDToString(fixture.publisherID) {
+		t.Fatalf("quota rejection recipient = %s, want creator %s", recipientID, util.UUIDToString(fixture.publisherID))
+	}
+	if severity != "attention" {
+		t.Fatalf("quota rejection severity = %q, want attention", severity)
+	}
+	if strings.Contains(body, fixture.resetAt.UTC().Format(time.RFC3339)) ||
+		!strings.Contains(body, fixture.resetAt.UTC().Format("January 2, 2006 at 15:04 UTC")) {
+		t.Fatalf("quota rejection body reset time is not human-readable: %q", body)
 	}
 
 	usage, err := fixture.service.AutopilotQuotaUsage(ctx, fixture.workspaceID)
